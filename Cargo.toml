@@ -1,19 +1,17 @@
 [package]
-name = "servo_arc"
-version = "0.1.1"
+name = "triomphe"
+version = "0.1.0"
 authors = ["The Servo Project Developers"]
 license = "MIT/Apache-2.0"
-repository = "https://github.com/servo/servo"
-description = "A fork of std::sync::Arc with some extra functionality and without weak references"
+repository = "https://github.com/Manishearth/triomphe"
+description = "A fork of std::sync::Arc with some extra functionality and without weak references (originally servo_arc)"
 
 [lib]
-name = "servo_arc"
+name = "triomphe"
 path = "lib.rs"
 
-[features]
-servo = ["serde"]
 
 [dependencies]
-nodrop = {version = "0.1.8"}
-serde = {version = "1.0", optional = true}
+nodrop = "0.1.8"
+serde = "1.0"
 stable_deref_trait = "1.0.0"

@@ -8,28 +8,24 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-//! Fork of Arc for Servo. This has the following advantages over std::sync::Arc:
+//! Fork of Arc. This has the following advantages over std::sync::Arc:
 //!
-//! * We don't waste storage on the weak reference count.
-//! * We don't do extra RMU operations to handle the possibility of weak references.
-//! * We can experiment with arena allocation (todo).
-//! * We can add methods to support our custom use cases [1].
-//! * We have support for dynamically-sized types (see from_header_and_iter).
-//! * We have support for thin arcs to unsized types (see ThinArc).
+//! * `triomphe::Arc` doesn't support weak references: we save space by excluding the weak reference count, and we don't do extra read-modify-update operations to handle the possibility of weak references.
+//! * `triomphe::UniqueArc` allows one to construct a temporarily-mutable `Arc` which can be converted to a regular `triomphe::Arc` later
+//! * `triomphe::OffsetArc` can be used transparently from C++ code and is compatible with (and can be converted to/from) `triomphe::Arc`
+//! * `triomphe::ArcBorrow` is functionally similar to `&triomphe::Arc<T>`, however in memory it's simply `&T`. This makes it more flexible for FFI; the source of the borrow need not be an `Arc` pinned on the stack (and can instead be a pointer from C++, or an `OffsetArc`). Additionally, this helps avoid pointer-chasing.
+//! * `triomphe::Arc` has can be constructed for dynamically-sized types via `from_header_and_iter`
+//! * `triomphe::ThinArc` provides thin-pointer `Arc`s to dynamically sized types
+//! * `triomphe::ArcUnion` is union of two `triomphe:Arc`s which fits inside one word of memory
 //!
-//! [1]: https://bugzilla.mozilla.org/show_bug.cgi?id=1360883
 
-// The semantics of `Arc` are alread documented in the Rust docs, so we don't
-// duplicate those here.
 #![allow(missing_docs)]
 
 extern crate nodrop;
-#[cfg(feature = "servo")]
 extern crate serde;
 extern crate stable_deref_trait;
 
 use nodrop::NoDrop;
-#[cfg(feature = "servo")]
 use serde::{Deserialize, Serialize};
 use stable_deref_trait::{CloneStableDeref, StableDeref};
 use std::borrow;
@@ -102,7 +98,7 @@ pub struct Arc<T: ?Sized> {
 /// out of it.
 ///
 /// ```rust
-/// # use servo_arc::UniqueArc;
+/// # use triomphe::UniqueArc;
 /// let data = [1, 2, 3, 4, 5];
 /// let mut x = UniqueArc::new(data);
 /// x[4] = 7; // mutate!
@@ -170,7 +166,7 @@ impl<T> Arc<T> {
     ///
     /// Note: This returns a pointer to the data T, which is offset in the allocation.
     ///
-    /// It is recommended to use RawOffsetArc for this.
+    /// It is recommended to use OffsetArc for this.
     #[inline]
     fn into_raw(this: Self) -> *const T {
         let ptr = unsafe { &((*this.ptr()).data) as *const _ };
@@ -183,7 +179,7 @@ impl<T> Arc<T> {
     /// Note: This raw pointer will be offset in the allocation and must be preceded
     /// by the atomic count.
     ///
-    /// It is recommended to use RawOffsetArc for this
+    /// It is recommended to use OffsetArc for this
     #[inline]
     unsafe fn from_raw(ptr: *const T) -> Self {
         // To find the corresponding pointer to the `ArcInner` we need
@@ -203,12 +199,12 @@ impl<T> Arc<T> {
         ArcBorrow(&**self)
     }
 
-    /// Temporarily converts |self| into a bonafide RawOffsetArc and exposes it to the
+    /// Temporarily converts |self| into a bonafide OffsetArc and exposes it to the
     /// provided callback. The refcount is not modified.
     #[inline(always)]
     pub fn with_raw_offset_arc<F, U>(&self, f: F) -> U
     where
-        F: FnOnce(&RawOffsetArc<T>) -> U,
+        F: FnOnce(&OffsetArc<T>) -> U,
     {
         // Synthesize transient Arc, which never touches the refcount of the ArcInner.
         let transient = unsafe { NoDrop::new(Arc::into_raw_offset(ptr::read(self))) };
@@ -490,7 +486,6 @@ impl<T: ?Sized> AsRef<T> for Arc<T> {
 unsafe impl<T: ?Sized> StableDeref for Arc<T> {}
 unsafe impl<T: ?Sized> CloneStableDeref for Arc<T> {}
 
-#[cfg(feature = "servo")]
 impl<'de, T: Deserialize<'de>> Deserialize<'de> for Arc<T> {
     fn deserialize<D>(deserializer: D) -> Result<Arc<T>, D::Error>
     where
@@ -500,7 +495,6 @@ impl<'de, T: Deserialize<'de>> Deserialize<'de> for Arc<T> {
     }
 }
 
-#[cfg(feature = "servo")]
 impl<T: Serialize> Serialize for Arc<T> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -662,7 +656,7 @@ type HeaderSliceWithLength<H, T> = HeaderSlice<HeaderWithLength<H>, T>;
 
 /// A "thin" `Arc` containing dynamically sized data
 ///
-/// This is functionally equivalent to Arc<(H, [T])>
+/// This is functionally equivalent to `Arc<(H, [T])>`
 ///
 /// When you create an `Arc` containing a dynamically sized type
 /// like `HeaderSlice<H, [T]>`, the `Arc` is represented on the stack
@@ -806,7 +800,7 @@ impl<H: Eq, T: Eq> Eq for ThinArc<H, T> {}
 /// entire ArcInner. This struct is FFI-compatible.
 ///
 /// ```text
-///  Arc<T>    RawOffsetArc<T>
+///  Arc<T>    OffsetArc<T>
 ///   |          |
 ///   v          v
 ///  ---------------------
@@ -823,52 +817,52 @@ impl<H: Eq, T: Eq> Eq for ThinArc<H, T> {}
 /// an FFI call overhead.
 #[derive(Eq)]
 #[repr(C)]
-pub struct RawOffsetArc<T> {
+pub struct OffsetArc<T> {
     ptr: ptr::NonNull<T>,
 }
 
-unsafe impl<T: Sync + Send> Send for RawOffsetArc<T> {}
-unsafe impl<T: Sync + Send> Sync for RawOffsetArc<T> {}
+unsafe impl<T: Sync + Send> Send for OffsetArc<T> {}
+unsafe impl<T: Sync + Send> Sync for OffsetArc<T> {}
 
-impl<T> Deref for RawOffsetArc<T> {
+impl<T> Deref for OffsetArc<T> {
     type Target = T;
     fn deref(&self) -> &Self::Target {
         unsafe { &*self.ptr.as_ptr() }
     }
 }
 
-impl<T> Clone for RawOffsetArc<T> {
+impl<T> Clone for OffsetArc<T> {
     #[inline]
     fn clone(&self) -> Self {
         Arc::into_raw_offset(self.clone_arc())
     }
 }
 
-impl<T> Drop for RawOffsetArc<T> {
+impl<T> Drop for OffsetArc<T> {
     fn drop(&mut self) {
-        let _ = Arc::from_raw_offset(RawOffsetArc {
+        let _ = Arc::from_raw_offset(OffsetArc {
             ptr: self.ptr.clone(),
         });
     }
 }
 
-impl<T: fmt::Debug> fmt::Debug for RawOffsetArc<T> {
+impl<T: fmt::Debug> fmt::Debug for OffsetArc<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         fmt::Debug::fmt(&**self, f)
     }
 }
 
-impl<T: PartialEq> PartialEq for RawOffsetArc<T> {
-    fn eq(&self, other: &RawOffsetArc<T>) -> bool {
+impl<T: PartialEq> PartialEq for OffsetArc<T> {
+    fn eq(&self, other: &OffsetArc<T>) -> bool {
         *(*self) == *(*other)
     }
 
-    fn ne(&self, other: &RawOffsetArc<T>) -> bool {
+    fn ne(&self, other: &OffsetArc<T>) -> bool {
         *(*self) != *(*other)
     }
 }
 
-impl<T> RawOffsetArc<T> {
+impl<T> OffsetArc<T> {
     /// Temporarily converts |self| into a bonafide Arc and exposes it to the
     /// provided callback. The refcount is not modified.
     #[inline]
@@ -901,7 +895,7 @@ impl<T> RawOffsetArc<T> {
         T: Clone,
     {
         unsafe {
-            // extract the RawOffsetArc as an owned variable
+            // extract the OffsetArc as an owned variable
             let this = ptr::read(self);
             // treat it as a real Arc
             let mut arc = Arc::from_raw_offset(this);
@@ -909,7 +903,7 @@ impl<T> RawOffsetArc<T> {
             // This may mutate `arc`
             let ret = Arc::make_mut(&mut arc) as *mut _;
             // Store the possibly-mutated arc back inside, after converting
-            // it to a RawOffsetArc again
+            // it to a OffsetArc again
             ptr::write(self, Arc::into_raw_offset(arc));
             &mut *ret
         }
@@ -918,7 +912,7 @@ impl<T> RawOffsetArc<T> {
     /// Clone it as an `Arc`
     #[inline]
     pub fn clone_arc(&self) -> Arc<T> {
-        RawOffsetArc::with_arc(self, |a| a.clone())
+        OffsetArc::with_arc(self, |a| a.clone())
     }
 
     /// Produce a pointer to the data that can be converted back
@@ -930,21 +924,21 @@ impl<T> RawOffsetArc<T> {
 }
 
 impl<T> Arc<T> {
-    /// Converts an `Arc` into a `RawOffsetArc`. This consumes the `Arc`, so the refcount
+    /// Converts an `Arc` into a `OffsetArc`. This consumes the `Arc`, so the refcount
     /// is not modified.
     #[inline]
-    pub fn into_raw_offset(a: Self) -> RawOffsetArc<T> {
+    pub fn into_raw_offset(a: Self) -> OffsetArc<T> {
         unsafe {
-            RawOffsetArc {
+            OffsetArc {
                 ptr: ptr::NonNull::new_unchecked(Arc::into_raw(a) as *mut T),
             }
         }
     }
 
-    /// Converts a `RawOffsetArc` into an `Arc`. This consumes the `RawOffsetArc`, so the refcount
+    /// Converts a `OffsetArc` into an `Arc`. This consumes the `OffsetArc`, so the refcount
     /// is not modified.
     #[inline]
-    pub fn from_raw_offset(a: RawOffsetArc<T>) -> Self {
+    pub fn from_raw_offset(a: OffsetArc<T>) -> Self {
         let ptr = a.ptr.as_ptr();
         mem::forget(a);
         unsafe { Arc::from_raw(ptr) }
@@ -962,7 +956,7 @@ impl<T> Arc<T> {
 ///
 /// However, C++ code may hand us refcounted things as pointers to T directly,
 /// so we have to conjure up a temporary `Arc` on the stack each time. The
-/// same happens for when the object is managed by a `RawOffsetArc`.
+/// same happens for when the object is managed by a `OffsetArc`.
 ///
 /// `ArcBorrow` lets us deal with borrows of known-refcounted objects
 /// without needing to worry about where the `Arc<T>` is.
