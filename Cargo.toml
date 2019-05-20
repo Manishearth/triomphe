@@ -1,10 +1,12 @@
 [package]
 name = "triomphe"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["The Servo Project Developers"]
 license = "MIT/Apache-2.0"
 repository = "https://github.com/Manishearth/triomphe"
 description = "A fork of std::sync::Arc with some extra functionality and without weak references (originally servo_arc)"
+keywords = ["arc", "ffi", "sync", "data-structure"]
+categories = ["concurrency", "data-structures"]
 
 [lib]
 name = "triomphe"
