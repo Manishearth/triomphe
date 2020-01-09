@@ -21,6 +21,8 @@
 
 #![allow(missing_docs)]
 
+#[macro_use]
+extern crate memoffset;
 extern crate nodrop;
 extern crate serde;
 extern crate stable_deref_trait;
@@ -44,25 +46,6 @@ use std::slice;
 use std::sync::atomic;
 use std::sync::atomic::Ordering::{Acquire, Relaxed, Release};
 use std::{isize, usize};
-
-// Private macro to get the offset of a struct field in bytes from the address of the struct.
-macro_rules! offset_of {
-    ($container:path, $field:ident) => {{
-        // Make sure the field actually exists. This line ensures that a compile-time error is
-        // generated if $field is accessed through a Deref impl.
-        let $container { $field: _, .. };
-
-        // Create an (invalid) instance of the container and calculate the offset to its
-        // field. Using a null pointer might be UB if `&(*(0 as *const T)).field` is interpreted to
-        // be nullptr deref.
-        let invalid: $container = ::std::mem::uninitialized();
-        let offset = &invalid.$field as *const _ as usize - &invalid as *const _ as usize;
-
-        // Do not run destructors on the made up invalid instance.
-        ::std::mem::forget(invalid);
-        offset as isize
-    }};
-}
 
 /// A soft limit on the amount of references that may be made to an `Arc`.
 ///
@@ -184,7 +167,7 @@ impl<T> Arc<T> {
     unsafe fn from_raw(ptr: *const T) -> Self {
         // To find the corresponding pointer to the `ArcInner` we need
         // to subtract the offset of the `data` field from the pointer.
-        let ptr = (ptr as *const u8).offset(-offset_of!(ArcInner<T>, data));
+        let ptr = (ptr as *const u8).sub(offset_of!(ArcInner<T>, data));
         Arc {
             p: ptr::NonNull::new_unchecked(ptr as *mut ArcInner<T>),
         }
