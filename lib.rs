@@ -21,11 +21,9 @@
 
 #![allow(missing_docs)]
 
-extern crate nodrop;
 extern crate serde;
 extern crate stable_deref_trait;
 
-use nodrop::NoDrop;
 use serde::{Deserialize, Serialize};
 use stable_deref_trait::{CloneStableDeref, StableDeref};
 use std::borrow;
@@ -36,6 +34,7 @@ use std::hash::{Hash, Hasher};
 use std::iter::{ExactSizeIterator, Iterator};
 use std::marker::PhantomData;
 use std::mem;
+use std::mem::ManuallyDrop;
 use std::ops::{Deref, DerefMut};
 use std::os::raw::c_void;
 use std::process;
@@ -207,7 +206,7 @@ impl<T> Arc<T> {
         F: FnOnce(&OffsetArc<T>) -> U,
     {
         // Synthesize transient Arc, which never touches the refcount of the ArcInner.
-        let transient = unsafe { NoDrop::new(Arc::into_raw_offset(ptr::read(self))) };
+        let transient = unsafe { ManuallyDrop::new(Arc::into_raw_offset(ptr::read(self))) };
 
         // Expose the transient Arc to the callback, which may clone it if it wants.
         let result = f(&transient);
@@ -697,18 +696,13 @@ impl<H, T> ThinArc<H, T> {
     {
         // Synthesize transient Arc, which never touches the refcount of the ArcInner.
         let transient = unsafe {
-            NoDrop::new(Arc {
+            ManuallyDrop::new(Arc {
                 p: ptr::NonNull::new_unchecked(thin_to_thick(self.ptr)),
             })
         };
 
         // Expose the transient Arc to the callback, which may clone it if it wants.
         let result = f(&transient);
-
-        // Forget the transient Arc to leave the refcount untouched.
-        // XXXManishearth this can be removed when unions stabilize,
-        // since then NoDrop becomes zero overhead
-        mem::forget(transient);
 
         // Forward the result.
         result
@@ -871,15 +865,10 @@ impl<T> OffsetArc<T> {
         F: FnOnce(&Arc<T>) -> U,
     {
         // Synthesize transient Arc, which never touches the refcount of the ArcInner.
-        let transient = unsafe { NoDrop::new(Arc::from_raw(self.ptr.as_ptr())) };
+        let transient = unsafe { ManuallyDrop::new(Arc::from_raw(self.ptr.as_ptr())) };
 
         // Expose the transient Arc to the callback, which may clone it if it wants.
         let result = f(&transient);
-
-        // Forget the transient Arc to leave the refcount untouched.
-        // XXXManishearth this can be removed when unions stabilize,
-        // since then NoDrop becomes zero overhead
-        mem::forget(transient);
 
         // Forward the result.
         result
@@ -1003,15 +992,10 @@ impl<'a, T> ArcBorrow<'a, T> {
         T: 'static,
     {
         // Synthesize transient Arc, which never touches the refcount.
-        let transient = unsafe { NoDrop::new(Arc::from_raw(self.0)) };
+        let transient = unsafe { ManuallyDrop::new(Arc::from_raw(self.0)) };
 
         // Expose the transient Arc to the callback, which may clone it if it wants.
         let result = f(&transient);
-
-        // Forget the transient Arc to leave the refcount untouched.
-        // XXXManishearth this can be removed when unions stabilize,
-        // since then NoDrop becomes zero overhead
-        mem::forget(transient);
 
         // Forward the result.
         result
