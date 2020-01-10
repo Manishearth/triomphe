@@ -15,6 +15,5 @@ path = "lib.rs"
 
 [dependencies]
 memoffset = "0.5.3"
-nodrop = "0.1.8"
 serde = "1.0"
 stable_deref_trait = "1.0.0"
