@@ -21,11 +21,14 @@
 
 #![allow(missing_docs)]
 
+#[macro_use]
+extern crate memoffset;
 extern crate serde;
 extern crate stable_deref_trait;
 
 use serde::{Deserialize, Serialize};
 use stable_deref_trait::{CloneStableDeref, StableDeref};
+use std::alloc::Layout;
 use std::borrow;
 use std::cmp::Ordering;
 use std::convert::From;
@@ -43,25 +46,6 @@ use std::slice;
 use std::sync::atomic;
 use std::sync::atomic::Ordering::{Acquire, Relaxed, Release};
 use std::{isize, usize};
-
-// Private macro to get the offset of a struct field in bytes from the address of the struct.
-macro_rules! offset_of {
-    ($container:path, $field:ident) => {{
-        // Make sure the field actually exists. This line ensures that a compile-time error is
-        // generated if $field is accessed through a Deref impl.
-        let $container { $field: _, .. };
-
-        // Create an (invalid) instance of the container and calculate the offset to its
-        // field. Using a null pointer might be UB if `&(*(0 as *const T)).field` is interpreted to
-        // be nullptr deref.
-        let invalid: $container = ::std::mem::uninitialized();
-        let offset = &invalid.$field as *const _ as usize - &invalid as *const _ as usize;
-
-        // Do not run destructors on the made up invalid instance.
-        ::std::mem::forget(invalid);
-        offset as isize
-    }};
-}
 
 /// A soft limit on the amount of references that may be made to an `Arc`.
 ///
@@ -183,7 +167,7 @@ impl<T> Arc<T> {
     unsafe fn from_raw(ptr: *const T) -> Self {
         // To find the corresponding pointer to the `ArcInner` we need
         // to subtract the offset of the `data` field from the pointer.
-        let ptr = (ptr as *const u8).offset(-offset_of!(ArcInner<T>, data));
+        let ptr = (ptr as *const u8).sub(offset_of!(ArcInner<T>, data));
         Arc {
             p: ptr::NonNull::new_unchecked(ptr as *mut ArcInner<T>),
         }
@@ -514,11 +498,6 @@ pub struct HeaderSlice<H, T: ?Sized> {
     pub slice: T,
 }
 
-#[inline(always)]
-fn divide_rounding_up(dividend: usize, divisor: usize) -> usize {
-    (dividend + divisor - 1) / divisor
-}
-
 impl<H, T> Arc<HeaderSlice<H, [T]>> {
     /// Creates an Arc for a HeaderSlice using the given header struct and
     /// iterator to generate the slice. The resulting Arc will be fat.
@@ -527,52 +506,35 @@ impl<H, T> Arc<HeaderSlice<H, [T]>> {
     where
         I: Iterator<Item = T> + ExactSizeIterator,
     {
-        use std::mem::size_of;
-        assert_ne!(size_of::<T>(), 0, "Need to think about ZST");
+        assert_ne!(mem::size_of::<T>(), 0, "Need to think about ZST");
 
-        // Compute the required size for the allocation.
         let num_items = items.len();
-        let size = {
-            // First, determine the alignment of a hypothetical pointer to a
-            // HeaderSlice.
-            let fake_slice_ptr_align: usize = mem::align_of::<ArcInner<HeaderSlice<H, [T; 1]>>>();
 
-            // Next, synthesize a totally garbage (but properly aligned) pointer
-            // to a sequence of T.
-            let fake_slice_ptr = fake_slice_ptr_align as *const T;
+        // Offset of the start of the slice in the allocation.
+        let inner_to_data_offset = offset_of!(ArcInner<HeaderSlice<H, [T; 1]>>, data);
+        let data_to_slice_offset = offset_of!(HeaderSlice<H, [T; 1]>, slice);
+        let slice_offset = inner_to_data_offset + data_to_slice_offset;
 
-            // Convert that sequence to a fat pointer. The address component of
-            // the fat pointer will be garbage, but the length will be correct.
-            let fake_slice = unsafe { slice::from_raw_parts(fake_slice_ptr, num_items) };
+        // Compute the size of the real payload.
+        let slice_size = mem::size_of::<T>()
+            .checked_mul(num_items)
+            .expect("size overflows");
+        let usable_size = slice_offset
+            .checked_add(slice_size)
+            .expect("size overflows");
 
-            // Pretend the garbage address points to our allocation target (with
-            // a trailing sequence of T), rather than just a sequence of T.
-            let fake_ptr = fake_slice as *const [T] as *const ArcInner<HeaderSlice<H, [T]>>;
-            let fake_ref: &ArcInner<HeaderSlice<H, [T]>> = unsafe { &*fake_ptr };
-
-            // Use size_of_val, which will combine static information about the
-            // type with the length from the fat pointer. The garbage address
-            // will not be used.
-            mem::size_of_val(fake_ref)
-        };
+        // Round up size to alignment.
+        let align = mem::align_of::<ArcInner<HeaderSlice<H, [T; 1]>>>();
+        let size = usable_size.wrapping_add(align - 1) & !(align - 1);
+        assert!(size >= usable_size, "size overflows");
+        let layout = Layout::from_size_align(size, align).expect("invalid layout");
 
         let ptr: *mut ArcInner<HeaderSlice<H, [T]>>;
         unsafe {
-            // Allocate the buffer. We use Vec because the underlying allocation
-            // machinery isn't available in stable Rust.
-            //
-            // To avoid alignment issues, we allocate words rather than bytes,
-            // rounding up to the nearest word size.
-            let buffer = if mem::align_of::<T>() <= mem::align_of::<usize>() {
-                Self::allocate_buffer::<usize>(size)
-            } else if mem::align_of::<T>() <= mem::align_of::<u64>() {
-                // On 32-bit platforms <T> may have 8 byte alignment while usize has 4 byte aligment.
-                // Use u64 to avoid over-alignment.
-                // This branch will compile away in optimized builds.
-                Self::allocate_buffer::<u64>(size)
-            } else {
-                panic!("Over-aligned type not handled");
-            };
+            let buffer = std::alloc::alloc(layout);
+            if buffer.is_null() {
+                std::alloc::handle_alloc_error(layout);
+            }
 
             // Synthesize the fat pointer. We do this by claiming we have a direct
             // pointer to a [T], and then changing the type of the borrow. The key
@@ -589,7 +551,8 @@ impl<H, T> Arc<HeaderSlice<H, [T]>> {
             // we'll just leak the uninitialized memory.
             ptr::write(&mut ((*ptr).count), atomic::AtomicUsize::new(1));
             ptr::write(&mut ((*ptr).data.header), header);
-            let mut current: *mut T = &mut (*ptr).data.slice[0];
+            let mut current = (*ptr).data.slice.as_mut_ptr();
+            debug_assert_eq!(current as usize - buffer as usize, slice_offset);
             for _ in 0..num_items {
                 ptr::write(
                     current,
@@ -605,13 +568,13 @@ impl<H, T> Arc<HeaderSlice<H, [T]>> {
             );
 
             // We should have consumed the buffer exactly.
-            debug_assert_eq!(current as *mut u8, buffer.offset(size as isize));
+            debug_assert_eq!(current as *mut u8, buffer.add(usable_size));
         }
 
         // Return the fat Arc.
         assert_eq!(
-            size_of::<Self>(),
-            size_of::<usize>() * 2,
+            mem::size_of::<Self>(),
+            mem::size_of::<usize>() * 2,
             "The Arc will be fat"
         );
         unsafe {
@@ -619,14 +582,6 @@ impl<H, T> Arc<HeaderSlice<H, [T]>> {
                 p: ptr::NonNull::new_unchecked(ptr),
             }
         }
-    }
-
-    #[inline]
-    unsafe fn allocate_buffer<W>(size: usize) -> *mut u8 {
-        let words_to_allocate = divide_rounding_up(size, mem::size_of::<W>());
-        let mut vec = Vec::<W>::with_capacity(words_to_allocate);
-        vec.set_len(words_to_allocate);
-        Box::into_raw(vec.into_boxed_slice()) as *mut W as *mut u8
     }
 }
 
