@@ -13,3 +13,12 @@ jobs:
       run: cargo build --verbose
     - name: Test
       run: cargo test
+
+  miri:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v1
+    - name: Install Rust Nightly
+      run: rustup toolchain install nightly --component miri --profile minimal
+    - name: Miri Test
+      run: cargo +nightly miri test
