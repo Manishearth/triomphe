@@ -4,15 +4,22 @@ on: [push, pull_request]
 
 jobs:
   build:
-
     runs-on: ubuntu-latest
-
     steps:
     - uses: actions/checkout@v1
     - name: Build
       run: cargo build --verbose
     - name: Test
       run: cargo test
+
+  build-all:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v1
+    - name: Build
+      run: cargo build --verbose --all-features
+    - name: Test
+      run: cargo test --all-features
 
   miri:
     runs-on: ubuntu-latest
@@ -22,3 +29,5 @@ jobs:
       run: rustup toolchain install nightly --component miri --profile minimal
     - name: Miri Test
       run: cargo +nightly miri test
+    - name: Miri Test all features
+      run: cargo +nightly miri test --all-features

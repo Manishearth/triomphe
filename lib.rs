@@ -487,6 +487,26 @@ impl<T: Serialize> Serialize for Arc<T> {
     }
 }
 
+#[cfg(feature = "arc-swap")]
+unsafe impl<T: ?Sized + Clone> arc_swap::RefCnt for Arc<T> {
+    type Base = T;
+
+    #[inline]
+    fn into_ptr(me: Self) -> *mut Self::Base {
+        Arc::into_raw(me) as *mut T
+    }
+
+    #[inline]
+    fn as_ptr(me: &Self) -> *mut Self::Base {
+        me.as_ref() as *const T as *mut T
+    }
+
+    #[inline]
+    unsafe fn from_ptr(ptr: *const Self::Base) -> Self {
+        Arc::from_raw(ptr)
+    }
+}
+
 /// Structure to allow Arc-managing some fixed-sized data and a variably-sized
 /// slice in a single allocation.
 #[derive(Debug, Eq, PartialEq, PartialOrd)]
@@ -811,6 +831,30 @@ impl<T: PartialEq> PartialEq for OffsetArc<T> {
     }
 }
 
+#[cfg(feature = "arc-swap")]
+unsafe impl<T: ?Sized + Clone> arc_swap::RefCnt for OffsetArc<T> {
+    type Base = T;
+
+    #[inline]
+    fn into_ptr(me: Self) -> *mut Self::Base {
+        let ret = me.ptr.as_ptr();
+        mem::forget(me);
+        ret
+    }
+
+    #[inline]
+    fn as_ptr(me: &Self) -> *mut Self::Base {
+        me.ptr.as_ptr()
+    }
+
+    #[inline]
+    unsafe fn from_ptr(ptr: *const Self::Base) -> Self {
+        OffsetArc {
+            ptr: ptr::NonNull::new_unchecked(ptr as *mut T),
+        }
+    }
+}
+
 impl<T> OffsetArc<T> {
     /// Temporarily converts |self| into a bonafide Arc and exposes it to the
     /// provided callback. The refcount is not modified.
@@ -1109,7 +1153,7 @@ mod tests {
     use std::sync::atomic;
     use std::sync::atomic::Ordering::{Acquire, SeqCst};
 
-    #[derive(PartialEq)]
+    #[derive(PartialEq, Clone)]
     struct Canary(*mut atomic::AtomicUsize);
 
     impl Drop for Canary {
@@ -1132,6 +1176,40 @@ mod tests {
             let _ = y.clone();
             let _ = x == x;
             Arc::from_thin(x.clone());
+        }
+        assert_eq!(canary.load(Acquire), 1);
+    }
+
+    #[cfg(feature = "arc-swap")]
+    #[test]
+    // miri and arc-swap currently don't work together.
+    // issue: https://github.com/vorner/arc-swap/issues/23
+    #[cfg_attr(miri, ignore)]
+    fn arc_swap_() {
+        type ArcSwap<T> = arc_swap::ArcSwapAny<Arc<T>>;
+
+        let mut canary = atomic::AtomicUsize::new(0);
+        let c = Canary(&mut canary as *mut atomic::AtomicUsize);
+
+        {
+            let x = ArcSwap::from(Arc::new(c));
+            let _ = x.clone();
+        }
+        assert_eq!(canary.load(Acquire), 1);
+    }
+
+    #[cfg(feature = "arc-swap")]
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn offset_arc_swap() {
+        type ArcSwap<T> = arc_swap::ArcSwapAny<super::OffsetArc<T>>;
+
+        let mut canary = atomic::AtomicUsize::new(0);
+        let c = Canary(&mut canary as *mut atomic::AtomicUsize);
+
+        {
+            let x = ArcSwap::from(Arc::into_raw_offset(Arc::new(c)));
+            let _ = x.clone();
         }
         assert_eq!(canary.load(Acquire), 1);
     }
