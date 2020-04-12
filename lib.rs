@@ -75,7 +75,7 @@ const STATIC_REFCOUNT: usize = usize::MAX;
 /// standard library `Arc`, this `Arc` does not support weak reference counting.
 ///
 /// [`Arc`]: https://doc.rust-lang.org/stable/std/sync/struct.Arc.html
-#[repr(C)]
+#[repr(transparent)]
 pub struct Arc<T: ?Sized> {
     p: ptr::NonNull<ArcInner<T>>,
     phantom: PhantomData<T>,
@@ -104,6 +104,7 @@ pub struct Arc<T: ?Sized> {
 /// x[4] = 7; // mutate!
 /// let y = x.shareable(); // y is an Arc<T>
 /// ```
+#[repr(transparent)]
 pub struct UniqueArc<T: ?Sized>(Arc<T>);
 
 impl<T> UniqueArc<T> {
@@ -766,7 +767,7 @@ type HeaderSliceWithLength<H, T> = HeaderSlice<HeaderWithLength<H>, T>;
 ///
 /// `ThinArc` solves this by storing the length in the allocation itself,
 /// via `HeaderSliceWithLength`.
-#[repr(C)]
+#[repr(transparent)]
 pub struct ThinArc<H, T> {
     ptr: ptr::NonNull<ArcInner<HeaderSliceWithLength<H, [T; 0]>>>,
     phantom: PhantomData<(H, T)>,
@@ -945,9 +946,10 @@ impl<H: Eq, T: Eq> Eq for ThinArc<H, T> {}
 /// and wish for C++ to be able to read the data behind the `Arc` without incurring
 /// an FFI call overhead.
 #[derive(Eq)]
-#[repr(C)]
+#[repr(transparent)]
 pub struct OffsetArc<T> {
     ptr: ptr::NonNull<T>,
+    // XXX(thom) doesn't this need PhantomData<T> (or PhantomData<Arc<T>>?)
 }
 
 unsafe impl<T: Sync + Send> Send for OffsetArc<T> {}
@@ -1085,6 +1087,7 @@ impl<T> Arc<T> {
 /// `ArcBorrow` lets us deal with borrows of known-refcounted objects
 /// without needing to worry about where the `Arc<T>` is.
 #[derive(Debug, Eq, PartialEq)]
+#[repr(transparent)]
 pub struct ArcBorrow<'a, T: 'a>(&'a T);
 
 impl<'a, T> Copy for ArcBorrow<'a, T> {}
