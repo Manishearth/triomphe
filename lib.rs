@@ -65,6 +65,10 @@ use stable_deref_trait::{CloneStableDeref, StableDeref};
 /// necessarily) at _exactly_ `MAX_REFCOUNT + 1` references.
 const MAX_REFCOUNT: usize = (isize::MAX) as usize;
 
+/// Special refcount value that means the data is not reference counted,
+/// and that the `Arc` is really acting as a read-only static reference.
+const STATIC_REFCOUNT: usize = usize::MAX;
+
 /// An atomically reference counted shared pointer
 ///
 /// See the documentation for [`Arc`] in the standard library. Unlike the
@@ -74,6 +78,7 @@ const MAX_REFCOUNT: usize = (isize::MAX) as usize;
 #[repr(C)]
 pub struct Arc<T: ?Sized> {
     p: ptr::NonNull<ArcInner<T>>,
+    phantom: PhantomData<T>,
 }
 
 /// An `Arc` that is known to be uniquely owned
@@ -113,6 +118,41 @@ impl<T> UniqueArc<T> {
     pub fn shareable(self) -> Arc<T> {
         self.0
     }
+
+    /// Construct an uninitialized arc
+    #[inline]
+    pub fn new_uninit() -> UniqueArc<mem::MaybeUninit<T>> {
+        unsafe {
+            let layout = Layout::new::<ArcInner<mem::MaybeUninit<T>>>();
+            let ptr = alloc::alloc::alloc(layout);
+            let mut p = ptr::NonNull::new(ptr)
+                .unwrap_or_else(|| alloc::alloc::handle_alloc_error(layout))
+                .cast::<ArcInner<mem::MaybeUninit<T>>>();
+            ptr::write(&mut p.as_mut().count, atomic::AtomicUsize::new(1));
+
+            UniqueArc(Arc {
+                p,
+                phantom: PhantomData,
+            })
+        }
+    }
+}
+
+impl<T> UniqueArc<mem::MaybeUninit<T>> {
+    /// Convert to an initialized Arc.
+    ///
+    /// # Safety
+    ///
+    /// This function is equivalent to `MaybeUninit::assume_init` and has the
+    /// same safety requirements. You are responsible for ensuring that the `T`
+    /// has actually been initialized before calling this method.
+    #[inline]
+    pub unsafe fn assume_init(this: Self) -> UniqueArc<T> {
+        UniqueArc(Arc {
+            p: mem::ManuallyDrop::new(this).0.p.cast(),
+            phantom: PhantomData,
+        })
+    }
 }
 
 impl<T> Deref for UniqueArc<T> {
@@ -146,13 +186,15 @@ impl<T> Arc<T> {
     /// Construct an `Arc<T>`
     #[inline]
     pub fn new(data: T) -> Self {
-        let x = Box::new(ArcInner {
+        let ptr = Box::into_raw(Box::new(ArcInner {
             count: atomic::AtomicUsize::new(1),
-            data: data,
-        });
+            data,
+        }));
+
         unsafe {
             Arc {
-                p: ptr::NonNull::new_unchecked(Box::into_raw(x)),
+                p: ptr::NonNull::new_unchecked(ptr),
+                phantom: PhantomData,
             }
         }
     }
@@ -182,6 +224,30 @@ impl<T> Arc<T> {
         let ptr = (ptr as *const u8).sub(offset_of!(ArcInner<T>, data));
         Arc {
             p: ptr::NonNull::new_unchecked(ptr as *mut ArcInner<T>),
+            phantom: PhantomData,
+        }
+    }
+
+    /// Create a new static Arc<T> (one that won't reference count the object).
+    #[inline]
+    pub fn new_static<F>(data: T) -> Arc<T> {
+        unsafe {
+            let layout = Layout::new::<ArcInner<T>>();
+            let buffer = ptr::NonNull::new(alloc::alloc::alloc(layout))
+                .unwrap_or_else(|| alloc::alloc::handle_alloc_error(layout))
+                .cast::<ArcInner<T>>();
+
+            let x = ArcInner {
+                count: atomic::AtomicUsize::new(STATIC_REFCOUNT),
+                data,
+            };
+
+            ptr::write(buffer.as_ptr(), x);
+
+            Arc {
+                p: buffer,
+                phantom: PhantomData,
+            }
         }
     }
 
@@ -216,8 +282,14 @@ impl<T> Arc<T> {
 
     /// Returns the address on the heap of the Arc itself -- not the T within it -- for memory
     /// reporting.
+    ///
+    /// If this is a static reference, this returns null.
     pub fn heap_ptr(&self) -> *const c_void {
-        self.p.as_ptr() as *const ArcInner<T> as *const c_void
+        if self.inner().count.load(Relaxed) == STATIC_REFCOUNT {
+            ptr::null()
+        } else {
+            self.p.as_ptr() as *const ArcInner<T> as *const c_void
+        }
     }
 }
 
@@ -266,35 +338,40 @@ fn abort() -> ! {
 impl<T: ?Sized> Clone for Arc<T> {
     #[inline]
     fn clone(&self) -> Self {
-        // Using a relaxed ordering is alright here, as knowledge of the
-        // original reference prevents other threads from erroneously deleting
-        // the object.
-        //
-        // As explained in the [Boost documentation][1], Increasing the
-        // reference counter can always be done with memory_order_relaxed: New
-        // references to an object can only be formed from an existing
-        // reference, and passing an existing reference from one thread to
-        // another must already provide any required synchronization.
-        //
-        // [1]: (www.boost.org/doc/libs/1_55_0/doc/html/atomic/usage_examples.html)
-        let old_size = self.inner().count.fetch_add(1, Relaxed);
+        // Using a relaxed ordering to check for STATIC_REFCOUNT is safe, since
+        // `count` never changes between STATIC_REFCOUNT and other values.
+        if self.inner().count.load(Relaxed) != STATIC_REFCOUNT {
+            // Using a relaxed ordering is alright here, as knowledge of the
+            // original reference prevents other threads from erroneously deleting
+            // the object.
+            //
+            // As explained in the [Boost documentation][1], Increasing the
+            // reference counter can always be done with memory_order_relaxed: New
+            // references to an object can only be formed from an existing
+            // reference, and passing an existing reference from one thread to
+            // another must already provide any required synchronization.
+            //
+            // [1]: (www.boost.org/doc/libs/1_55_0/doc/html/atomic/usage_examples.html)
+            let old_size = self.inner().count.fetch_add(1, Relaxed);
 
-        // However we need to guard against massive refcounts in case someone
-        // is `mem::forget`ing Arcs. If we don't do this the count can overflow
-        // and users will use-after free. We racily saturate to `isize::MAX` on
-        // the assumption that there aren't ~2 billion threads incrementing
-        // the reference count at once. This branch will never be taken in
-        // any realistic program.
-        //
-        // We abort because such a program is incredibly degenerate, and we
-        // don't care to support it.
-        if old_size > MAX_REFCOUNT {
-            abort();
+            // However we need to guard against massive refcounts in case someone
+            // is `mem::forget`ing Arcs. If we don't do this the count can overflow
+            // and users will use-after free. We racily saturate to `isize::MAX` on
+            // the assumption that there aren't ~2 billion threads incrementing
+            // the reference count at once. This branch will never be taken in
+            // any realistic program.
+            //
+            // We abort because such a program is incredibly degenerate, and we
+            // don't care to support it.
+            if old_size > MAX_REFCOUNT {
+                abort();
+            }
         }
 
         unsafe {
             Arc {
                 p: ptr::NonNull::new_unchecked(self.ptr()),
+                phantom: PhantomData,
             }
         }
     }
@@ -355,7 +432,16 @@ impl<T: ?Sized> Arc<T> {
         }
     }
 
-    /// Whether or not the `Arc` is uniquely owned (is the refcount 1?)
+    /// Whether or not the `Arc` is a static reference.
+    #[inline]
+    pub fn is_static(&self) -> bool {
+        // Using a relaxed ordering to check for STATIC_REFCOUNT is safe, since
+        // `count` never changes between STATIC_REFCOUNT and other values.
+        self.inner().count.load(Relaxed) == STATIC_REFCOUNT
+    }
+
+    /// Whether or not the `Arc` is uniquely owned (is the refcount 1?) and not
+    /// a static reference.
     #[inline]
     pub fn is_unique(&self) -> bool {
         // See the extensive discussion in [1] for why this needs to be Acquire.
@@ -368,6 +454,9 @@ impl<T: ?Sized> Arc<T> {
 impl<T: ?Sized> Drop for Arc<T> {
     #[inline]
     fn drop(&mut self) {
+        if self.is_static() {
+            return;
+        }
         // Because `fetch_sub` is already atomic, we do not need to synchronize
         // with other threads unless we are going to delete the object.
         if self.inner().count.fetch_sub(1, Release) != 1 {
@@ -519,6 +608,7 @@ impl<T: Serialize> Serialize for Arc<T> {
 /// Structure to allow Arc-managing some fixed-sized data and a variably-sized
 /// slice in a single allocation.
 #[derive(Debug, Eq, PartialEq, PartialOrd)]
+#[repr(C)]
 pub struct HeaderSlice<H, T: ?Sized> {
     /// The fixed-sized data.
     pub header: H,
@@ -531,7 +621,18 @@ impl<H, T> Arc<HeaderSlice<H, [T]>> {
     /// Creates an Arc for a HeaderSlice using the given header struct and
     /// iterator to generate the slice. The resulting Arc will be fat.
     #[inline]
-    pub fn from_header_and_iter<I>(header: H, mut items: I) -> Self
+    pub fn from_header_and_iter<I>(header: H, items: I) -> Self
+    where
+        I: Iterator<Item = T> + ExactSizeIterator,
+    {
+        Arc::from_header_and_iter_and_static(header, items, false)
+    }
+    /// Creates an Arc for a HeaderSlice using the given header struct and
+    /// iterator to generate the slice.
+    ///
+    /// `is_static` indicates whether to create a static Arc.
+    #[inline]
+    fn from_header_and_iter_and_static<I>(header: H, mut items: I, is_static: bool) -> Self
     where
         I: Iterator<Item = T> + ExactSizeIterator,
     {
@@ -540,8 +641,8 @@ impl<H, T> Arc<HeaderSlice<H, [T]>> {
         let num_items = items.len();
 
         // Offset of the start of the slice in the allocation.
-        let inner_to_data_offset = offset_of!(ArcInner<HeaderSlice<H, [T; 1]>>, data);
-        let data_to_slice_offset = offset_of!(HeaderSlice<H, [T; 1]>, slice);
+        let inner_to_data_offset = offset_of!(ArcInner<HeaderSlice<H, [T; 0]>>, data);
+        let data_to_slice_offset = offset_of!(HeaderSlice<H, [T; 0]>, slice);
         let slice_offset = inner_to_data_offset + data_to_slice_offset;
 
         // Compute the size of the real payload.
@@ -553,7 +654,7 @@ impl<H, T> Arc<HeaderSlice<H, [T]>> {
             .expect("size overflows");
 
         // Round up size to alignment.
-        let align = mem::align_of::<ArcInner<HeaderSlice<H, [T; 1]>>>();
+        let align = mem::align_of::<ArcInner<HeaderSlice<H, [T; 0]>>>();
         let size = usable_size.wrapping_add(align - 1) & !(align - 1);
         assert!(size >= usable_size, "size overflows");
         let layout = Layout::from_size_align(size, align).expect("invalid layout");
@@ -578,26 +679,37 @@ impl<H, T> Arc<HeaderSlice<H, [T]>> {
             //
             // Note that any panics here (i.e. from the iterator) are safe, since
             // we'll just leak the uninitialized memory.
-            ptr::write(&mut ((*ptr).count), atomic::AtomicUsize::new(1));
+            let count = if is_static {
+                atomic::AtomicUsize::new(STATIC_REFCOUNT)
+            } else {
+                atomic::AtomicUsize::new(1)
+            };
+            ptr::write(&mut ((*ptr).count), count);
             ptr::write(&mut ((*ptr).data.header), header);
-            let mut current = (*ptr).data.slice.as_mut_ptr();
-            debug_assert_eq!(current as usize - buffer as usize, slice_offset);
-            for _ in 0..num_items {
-                ptr::write(
-                    current,
-                    items
-                        .next()
-                        .expect("ExactSizeIterator over-reported length"),
+            if num_items != 0 {
+                let mut current = (*ptr).data.slice.as_mut_ptr();
+                debug_assert_eq!(current as usize - buffer as usize, slice_offset);
+                for _ in 0..num_items {
+                    ptr::write(
+                        current,
+                        items
+                            .next()
+                            .expect("ExactSizeIterator over-reported length"),
+                    );
+                    current = current.offset(1);
+                }
+                assert!(
+                    items.next().is_none(),
+                    "ExactSizeIterator under-reported length"
                 );
-                current = current.offset(1);
+
+                // We should have consumed the buffer exactly.
+                debug_assert_eq!(current as *mut u8, buffer.add(usable_size));
             }
             assert!(
                 items.next().is_none(),
                 "ExactSizeIterator under-reported length"
             );
-
-            // We should have consumed the buffer exactly.
-            debug_assert_eq!(current as *mut u8, buffer.add(usable_size));
         }
 
         // Return the fat Arc.
@@ -609,6 +721,7 @@ impl<H, T> Arc<HeaderSlice<H, [T]>> {
         unsafe {
             Arc {
                 p: ptr::NonNull::new_unchecked(ptr),
+                phantom: PhantomData,
             }
         }
     }
@@ -617,6 +730,7 @@ impl<H, T> Arc<HeaderSlice<H, [T]>> {
 /// Header data with an inline length. Consumers that use HeaderWithLength as the
 /// Header type in HeaderSlice can take advantage of ThinArc.
 #[derive(Debug, Eq, PartialEq, PartialOrd)]
+#[repr(C)]
 pub struct HeaderWithLength<H> {
     /// The fixed-sized data.
     pub header: H,
@@ -648,11 +762,14 @@ type HeaderSliceWithLength<H, T> = HeaderSlice<HeaderWithLength<H>, T>;
 /// have a thin pointer instead, perhaps for FFI compatibility
 /// or space efficiency.
 ///
+/// Note that we use `[T; 0]` in order to have the right alignment for `T`.
+///
 /// `ThinArc` solves this by storing the length in the allocation itself,
 /// via `HeaderSliceWithLength`.
 #[repr(C)]
 pub struct ThinArc<H, T> {
-    ptr: *mut ArcInner<HeaderSliceWithLength<H, [T; 1]>>,
+    ptr: ptr::NonNull<ArcInner<HeaderSliceWithLength<H, [T; 0]>>>,
+    phantom: PhantomData<(H, T)>,
 }
 
 unsafe impl<H: Sync + Send, T: Sync + Send> Send for ThinArc<H, T> {}
@@ -662,7 +779,7 @@ unsafe impl<H: Sync + Send, T: Sync + Send> Sync for ThinArc<H, T> {}
 //
 // See the comment around the analogous operation in from_header_and_iter.
 fn thin_to_thick<H, T>(
-    thin: *mut ArcInner<HeaderSliceWithLength<H, [T; 1]>>,
+    thin: *mut ArcInner<HeaderSliceWithLength<H, [T; 0]>>,
 ) -> *mut ArcInner<HeaderSliceWithLength<H, [T]>> {
     let len = unsafe { (*thin).data.header.length };
     let fake_slice: *mut [T] = unsafe { slice::from_raw_parts_mut(thin as *mut T, len) };
@@ -681,7 +798,8 @@ impl<H, T> ThinArc<H, T> {
         // Synthesize transient Arc, which never touches the refcount of the ArcInner.
         let transient = unsafe {
             ManuallyDrop::new(Arc {
-                p: ptr::NonNull::new_unchecked(thin_to_thick(self.ptr)),
+                p: ptr::NonNull::new_unchecked(thin_to_thick(self.ptr.as_ptr())),
+                phantom: PhantomData,
             })
         };
 
@@ -702,11 +820,35 @@ impl<H, T> ThinArc<H, T> {
         Arc::into_thin(Arc::from_header_and_iter(header, items))
     }
 
+    /// Create a static `ThinArc` for a HeaderSlice using the given header
+    /// struct and iterator to generate the slice.
+    pub fn static_from_header_and_iter<F, I>(header: H, items: I) -> Self
+    where
+        I: Iterator<Item = T> + ExactSizeIterator,
+    {
+        let header = HeaderWithLength::new(header, items.len());
+        Arc::into_thin(Arc::from_header_and_iter_and_static(
+            header, items, /* is_static = */ true,
+        ))
+    }
+
     /// Returns the address on the heap of the ThinArc itself -- not the T
     /// within it -- for memory reporting.
     #[inline]
+    pub fn ptr(&self) -> *const c_void {
+        self.ptr.as_ptr() as *const ArcInner<T> as *const c_void
+    }
+
+    /// If this is a static ThinArc, this returns null.
+    #[inline]
     pub fn heap_ptr(&self) -> *const c_void {
-        self.ptr as *const ArcInner<T> as *const c_void
+        let is_static =
+            ThinArc::with_arc(self, |a| a.inner().count.load(Relaxed) == STATIC_REFCOUNT);
+        if is_static {
+            ptr::null()
+        } else {
+            self.ptr()
+        }
     }
 }
 
@@ -715,7 +857,7 @@ impl<H, T> Deref for ThinArc<H, T> {
 
     #[inline]
     fn deref(&self) -> &Self::Target {
-        unsafe { &(*thin_to_thick(self.ptr)).data }
+        unsafe { &(*thin_to_thick(self.ptr.as_ptr())).data }
     }
 }
 
@@ -729,7 +871,10 @@ impl<H, T> Clone for ThinArc<H, T> {
 impl<H, T> Drop for ThinArc<H, T> {
     #[inline]
     fn drop(&mut self) {
-        let _ = Arc::from_thin(ThinArc { ptr: self.ptr });
+        let _ = Arc::from_thin(ThinArc {
+            ptr: self.ptr,
+            phantom: PhantomData,
+        });
     }
 }
 
@@ -747,7 +892,12 @@ impl<H, T> Arc<HeaderSliceWithLength<H, [T]>> {
         mem::forget(a);
         let thin_ptr = fat_ptr as *mut [usize] as *mut usize;
         ThinArc {
-            ptr: thin_ptr as *mut ArcInner<HeaderSliceWithLength<H, [T; 1]>>,
+            ptr: unsafe {
+                ptr::NonNull::new_unchecked(
+                    thin_ptr as *mut ArcInner<HeaderSliceWithLength<H, [T; 0]>>,
+                )
+            },
+            phantom: PhantomData,
         }
     }
 
@@ -755,11 +905,12 @@ impl<H, T> Arc<HeaderSliceWithLength<H, [T]>> {
     /// is not modified.
     #[inline]
     pub fn from_thin(a: ThinArc<H, T>) -> Self {
-        let ptr = thin_to_thick(a.ptr);
+        let ptr = thin_to_thick(a.ptr.as_ptr());
         mem::forget(a);
         unsafe {
             Arc {
                 p: ptr::NonNull::new_unchecked(ptr),
+                phantom: PhantomData,
             }
         }
     }
@@ -1148,6 +1299,34 @@ mod tests {
                 (*self.0).fetch_add(1, SeqCst);
             }
         }
+    }
+
+    #[test]
+    fn empty_thin() {
+        let header = HeaderWithLength::new(100u32, 0);
+        let x = Arc::from_header_and_iter(header, core::iter::empty::<i32>());
+        let y = Arc::into_thin(x.clone());
+        assert_eq!(y.header.header, 100);
+        assert!(y.slice.is_empty());
+        assert_eq!(x.header.header, 100);
+        assert!(x.slice.is_empty());
+    }
+
+    #[test]
+    fn thin_assert_padding() {
+        #[derive(Clone, Default)]
+        #[repr(C)]
+        struct Padded {
+            i: u16,
+        }
+
+        // The header will have more alignment than `Padded`
+        let header = HeaderWithLength::new(0i32, 2);
+        let items = vec![Padded { i: 0xdead }, Padded { i: 0xbeef }];
+        let a = ThinArc::from_header_and_iter(header, items.into_iter());
+        assert_eq!(a.slice.len(), 2);
+        assert_eq!(a.slice[0].i, 0xdead);
+        assert_eq!(a.slice[1].i, 0xbeef);
     }
 
     #[test]
