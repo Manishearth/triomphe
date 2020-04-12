@@ -20,32 +20,35 @@
 //!
 
 #![allow(missing_docs)]
+#![no_std]
+
+extern crate alloc;
 
 #[macro_use]
 extern crate memoffset;
 extern crate serde;
 extern crate stable_deref_trait;
 
+use alloc::alloc::Layout;
+use alloc::boxed::Box;
+use core::borrow;
+use core::cmp::Ordering;
+use core::convert::From;
+use core::ffi::c_void;
+use core::fmt;
+use core::hash::{Hash, Hasher};
+use core::iter::{ExactSizeIterator, Iterator};
+use core::marker::PhantomData;
+use core::mem;
+use core::mem::ManuallyDrop;
+use core::ops::{Deref, DerefMut};
+use core::ptr;
+use core::slice;
+use core::sync::atomic;
+use core::sync::atomic::Ordering::{Acquire, Relaxed, Release};
+use core::{isize, usize};
 use serde::{Deserialize, Serialize};
 use stable_deref_trait::{CloneStableDeref, StableDeref};
-use std::alloc::Layout;
-use std::borrow;
-use std::cmp::Ordering;
-use std::convert::From;
-use std::fmt;
-use std::hash::{Hash, Hasher};
-use std::iter::{ExactSizeIterator, Iterator};
-use std::marker::PhantomData;
-use std::mem;
-use std::mem::ManuallyDrop;
-use std::ops::{Deref, DerefMut};
-use std::os::raw::c_void;
-use std::process;
-use std::ptr;
-use std::slice;
-use std::sync::atomic;
-use std::sync::atomic::Ordering::{Acquire, Relaxed, Release};
-use std::{isize, usize};
 
 /// A soft limit on the amount of references that may be made to an `Arc`.
 ///
@@ -238,6 +241,18 @@ impl<T: ?Sized> Arc<T> {
     }
 }
 
+// `no_std`-compatible abort by forcing a panic while already panicing.
+fn abort() -> ! {
+    struct PanicOnDrop;
+    impl Drop for PanicOnDrop {
+        fn drop(&mut self) {
+            panic!()
+        }
+    }
+    let _double_panicer = PanicOnDrop;
+    panic!();
+}
+
 impl<T: ?Sized> Clone for Arc<T> {
     #[inline]
     fn clone(&self) -> Self {
@@ -264,7 +279,7 @@ impl<T: ?Sized> Clone for Arc<T> {
         // We abort because such a program is incredibly degenerate, and we
         // don't care to support it.
         if old_size > MAX_REFCOUNT {
-            process::abort();
+            abort();
         }
 
         unsafe {
@@ -531,9 +546,9 @@ impl<H, T> Arc<HeaderSlice<H, [T]>> {
 
         let ptr: *mut ArcInner<HeaderSlice<H, [T]>>;
         unsafe {
-            let buffer = std::alloc::alloc(layout);
+            let buffer = alloc::alloc::alloc(layout);
             if buffer.is_null() {
-                std::alloc::handle_alloc_error(layout);
+                alloc::alloc::handle_alloc_error(layout);
             }
 
             // Synthesize the fat pointer. We do this by claiming we have a direct
@@ -1104,10 +1119,11 @@ impl<A: fmt::Debug, B: fmt::Debug> fmt::Debug for ArcUnion<A, B> {
 #[cfg(test)]
 mod tests {
     use super::{Arc, HeaderWithLength, ThinArc};
-    use std::clone::Clone;
-    use std::ops::Drop;
-    use std::sync::atomic;
-    use std::sync::atomic::Ordering::{Acquire, SeqCst};
+    use alloc::vec;
+    use core::clone::Clone;
+    use core::ops::Drop;
+    use core::sync::atomic;
+    use core::sync::atomic::Ordering::{Acquire, SeqCst};
 
     #[derive(PartialEq)]
     struct Canary(*mut atomic::AtomicUsize);
