@@ -158,12 +158,14 @@ impl<T> UniqueArc<mem::MaybeUninit<T>> {
 
 impl<T> Deref for UniqueArc<T> {
     type Target = T;
+    #[inline]
     fn deref(&self) -> &T {
         &*self.0
     }
 }
 
 impl<T> DerefMut for UniqueArc<T> {
+    #[inline]
     fn deref_mut(&mut self) -> &mut T {
         // We know this to be uniquely owned
         unsafe { &mut (*self.0.ptr()).data }
@@ -325,6 +327,7 @@ impl<T: ?Sized> Arc<T> {
 
 // `no_std`-compatible abort by forcing a panic while already panicing.
 #[cfg(not(feature = "std"))]
+#[cold]
 fn abort() -> ! {
     struct PanicOnDrop;
     impl Drop for PanicOnDrop {
@@ -549,6 +552,7 @@ impl<T: ?Sized> fmt::Pointer for Arc<T> {
 }
 
 impl<T: Default> Default for Arc<T> {
+    #[inline]
     fn default() -> Arc<T> {
         Arc::new(Default::default())
     }
@@ -632,7 +636,6 @@ impl<H, T> Arc<HeaderSlice<H, [T]>> {
     /// iterator to generate the slice.
     ///
     /// `is_static` indicates whether to create a static Arc.
-    #[inline]
     fn from_header_and_iter_and_static<I>(header: H, mut items: I, is_static: bool) -> Self
     where
         I: Iterator<Item = T> + ExactSizeIterator,
@@ -742,11 +745,9 @@ pub struct HeaderWithLength<H> {
 
 impl<H> HeaderWithLength<H> {
     /// Creates a new HeaderWithLength.
+    #[inline]
     pub fn new(header: H, length: usize) -> Self {
-        HeaderWithLength {
-            header: header,
-            length: length,
-        }
+        HeaderWithLength { header, length }
     }
 }
 
@@ -957,6 +958,7 @@ unsafe impl<T: Sync + Send> Sync for OffsetArc<T> {}
 
 impl<T> Deref for OffsetArc<T> {
     type Target = T;
+    #[inline]
     fn deref(&self) -> &Self::Target {
         unsafe { &*self.ptr.as_ptr() }
     }
@@ -1117,6 +1119,7 @@ impl<'a, T> ArcBorrow<'a, T> {
 
     /// Compare two `ArcBorrow`s via pointer equality. Will only return
     /// true if they come from the same allocation
+    #[inline]
     pub fn ptr_eq(this: &Self, other: &Self) -> bool {
         this.0 as *const T == other.0 as *const T
     }
@@ -1202,6 +1205,7 @@ impl<A, B> ArcUnion<A, B> {
     }
 
     /// Returns true if the two values are pointer-equal.
+    #[inline]
     pub fn ptr_eq(this: &Self, other: &Self) -> bool {
         this.p == other.p
     }
@@ -1220,21 +1224,25 @@ impl<A, B> ArcUnion<A, B> {
     }
 
     /// Creates an `ArcUnion` from an instance of the first type.
+    #[inline]
     pub fn from_first(other: Arc<A>) -> Self {
         unsafe { Self::new(Arc::into_raw(other) as *mut _) }
     }
 
     /// Creates an `ArcUnion` from an instance of the second type.
+    #[inline]
     pub fn from_second(other: Arc<B>) -> Self {
         unsafe { Self::new(((Arc::into_raw(other) as usize) | 0x1) as *mut _) }
     }
 
     /// Returns true if this `ArcUnion` contains the first type.
+    #[inline]
     pub fn is_first(&self) -> bool {
         self.p.as_ptr() as usize & 0x1 == 0
     }
 
     /// Returns true if this `ArcUnion` contains the second type.
+    #[inline]
     pub fn is_second(&self) -> bool {
         !self.is_first()
     }
