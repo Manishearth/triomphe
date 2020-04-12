@@ -26,7 +26,9 @@ extern crate alloc;
 
 #[macro_use]
 extern crate memoffset;
+#[cfg(feature = "serde")]
 extern crate serde;
+#[cfg(feature = "stable_deref_trait")]
 extern crate stable_deref_trait;
 
 use alloc::alloc::Layout;
@@ -47,7 +49,9 @@ use core::slice;
 use core::sync::atomic;
 use core::sync::atomic::Ordering::{Acquire, Relaxed, Release};
 use core::{isize, usize};
+#[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "stable_deref_trait")]
 use stable_deref_trait::{CloneStableDeref, StableDeref};
 
 /// A soft limit on the amount of references that may be made to an `Arc`.
@@ -481,9 +485,12 @@ impl<T: ?Sized> AsRef<T> for Arc<T> {
     }
 }
 
+#[cfg(feature = "stable_deref_trait")]
 unsafe impl<T: ?Sized> StableDeref for Arc<T> {}
+#[cfg(feature = "stable_deref_trait")]
 unsafe impl<T: ?Sized> CloneStableDeref for Arc<T> {}
 
+#[cfg(feature = "serde")]
 impl<'de, T: Deserialize<'de>> Deserialize<'de> for Arc<T> {
     fn deserialize<D>(deserializer: D) -> Result<Arc<T>, D::Error>
     where
@@ -493,6 +500,7 @@ impl<'de, T: Deserialize<'de>> Deserialize<'de> for Arc<T> {
     }
 }
 
+#[cfg(feature = "serde")]
 impl<T: Serialize> Serialize for Arc<T> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where

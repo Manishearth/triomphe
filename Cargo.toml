@@ -12,8 +12,10 @@ categories = ["concurrency", "data-structures"]
 name = "triomphe"
 path = "lib.rs"
 
+[features]
+default = ["serde", "stable_deref_trait"]
 
 [dependencies]
 memoffset = "0.5.3"
-serde = { version = "1.0", default-features = false }
-stable_deref_trait = { version = "1.1.1", default-features = false }
+serde = { version = "1.0", default-features = false, optional = true }
+stable_deref_trait = { version = "1.1.1", default-features = false, optional = true }
