@@ -13,7 +13,8 @@ name = "triomphe"
 path = "lib.rs"
 
 [features]
-default = ["serde", "stable_deref_trait"]
+std = []
+default = ["serde", "stable_deref_trait", "std"]
 
 [dependencies]
 memoffset = "0.5.3"

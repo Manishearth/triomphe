@@ -20,9 +20,14 @@
 //!
 
 #![allow(missing_docs)]
-#![no_std]
+#![cfg_attr(not(feature = "std"), no_std)]
 
 extern crate alloc;
+#[cfg(feature = "std")]
+extern crate core;
+
+#[cfg(feature = "std")]
+use std::process::abort;
 
 #[macro_use]
 extern crate memoffset;
@@ -246,6 +251,7 @@ impl<T: ?Sized> Arc<T> {
 }
 
 // `no_std`-compatible abort by forcing a panic while already panicing.
+#[cfg(not(feature = "std"))]
 fn abort() -> ! {
     struct PanicOnDrop;
     impl Drop for PanicOnDrop {
