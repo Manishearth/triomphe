@@ -9,12 +9,14 @@ jobs:
 
     steps:
     - uses: actions/checkout@v1
-    - name: Build --no-default-features
-      run: cargo build --no-default-features --verbose
     - name: Build
       run: cargo build --verbose
     - name: Test
       run: cargo test
+    - name: Test --no-default-features
+      run: cargo test --no-default-features --verbose
+    - name: Test --all-features
+      run: cargo test --all-features --verbose
 
   miri:
     runs-on: ubuntu-latest
@@ -24,3 +26,7 @@ jobs:
       run: rustup toolchain install nightly --component miri --profile minimal
     - name: Miri Test
       run: cargo +nightly miri test
+    - name: Test --no-default-features
+      run: cargo +nightly miri test --no-default-features
+    - name: Test --all-features
+      run: cargo +nightly miri test --all-features

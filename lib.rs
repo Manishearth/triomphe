@@ -17,6 +17,7 @@
 //! * `triomphe::Arc` has can be constructed for dynamically-sized types via `from_header_and_iter`
 //! * `triomphe::ThinArc` provides thin-pointer `Arc`s to dynamically sized types
 //! * `triomphe::ArcUnion` is union of two `triomphe:Arc`s which fits inside one word of memory
+//! * If `feature = "static_arc"` is enabled, `Arc<T>` may hold references to static data, which don't do any refcounting.
 //!
 
 #![allow(missing_docs)]
@@ -67,6 +68,7 @@ const MAX_REFCOUNT: usize = (isize::MAX) as usize;
 
 /// Special refcount value that means the data is not reference counted,
 /// and that the `Arc` is really acting as a read-only static reference.
+#[cfg(feature = "static_arc")]
 const STATIC_REFCOUNT: usize = usize::MAX;
 
 /// An atomically reference counted shared pointer
@@ -231,8 +233,10 @@ impl<T> Arc<T> {
         }
     }
 
-    /// Create a new static Arc<T> (one that won't reference count the object).
+    /// `feature = "static_arc"` Create a new static Arc<T> (one that won't
+    /// reference count the object).
     #[inline]
+    #[cfg(feature = "static_arc")]
     pub fn new_static<F>(data: T) -> Arc<T> {
         unsafe {
             let layout = Layout::new::<ArcInner<T>>();
@@ -286,9 +290,9 @@ impl<T> Arc<T> {
     /// Returns the address on the heap of the Arc itself -- not the T within it -- for memory
     /// reporting.
     ///
-    /// If this is a static reference, this returns null.
+    /// `feature = "static_arc"` If this is a static reference, this returns null.
     pub fn heap_ptr(&self) -> *const c_void {
-        if self.inner().count.load(Relaxed) == STATIC_REFCOUNT {
+        if self.is_static() {
             ptr::null()
         } else {
             self.p.as_ptr() as *const ArcInner<T> as *const c_void
@@ -342,9 +346,9 @@ fn abort() -> ! {
 impl<T: ?Sized> Clone for Arc<T> {
     #[inline]
     fn clone(&self) -> Self {
-        // Using a relaxed ordering to check for STATIC_REFCOUNT is safe, since
-        // `count` never changes between STATIC_REFCOUNT and other values.
-        if self.inner().count.load(Relaxed) != STATIC_REFCOUNT {
+        let is_static = self.is_static();
+
+        if !is_static {
             // Using a relaxed ordering is alright here, as knowledge of the
             // original reference prevents other threads from erroneously deleting
             // the object.
@@ -436,12 +440,21 @@ impl<T: ?Sized> Arc<T> {
         }
     }
 
-    /// Whether or not the `Arc` is a static reference.
+    /// `feature = "static_arc"` Whether or not the `Arc` is a static reference.
     #[inline]
+    #[cfg(feature = "static_arc")]
     pub fn is_static(&self) -> bool {
         // Using a relaxed ordering to check for STATIC_REFCOUNT is safe, since
         // `count` never changes between STATIC_REFCOUNT and other values.
         self.inner().count.load(Relaxed) == STATIC_REFCOUNT
+    }
+
+    // Just to reduce the amount of #[cfg] noise. Use const fn to hopefully get
+    // better DCE on non-release builds. Should this be `pub`?
+    #[cfg(not(feature = "static_arc"))]
+    #[inline]
+    const fn is_static(&self) -> bool {
+        false
     }
 
     /// Whether or not the `Arc` is uniquely owned (is the refcount 1?) and not
@@ -635,12 +648,20 @@ impl<H, T> Arc<HeaderSlice<H, [T]>> {
     /// Creates an Arc for a HeaderSlice using the given header struct and
     /// iterator to generate the slice.
     ///
-    /// `is_static` indicates whether to create a static Arc.
+    /// `is_static` indicates whether to create a static Arc. If the
+    /// `static_arc` feature is disabled and this is true, we will panic.
     fn from_header_and_iter_and_static<I>(header: H, mut items: I, is_static: bool) -> Self
     where
         I: Iterator<Item = T> + ExactSizeIterator,
     {
         assert_ne!(mem::size_of::<T>(), 0, "Need to think about ZST");
+        #[cfg(not(feature = "static_arc"))]
+        {
+            assert!(
+                !is_static,
+                "Bug: is_static is true but static_arc is not supported"
+            );
+        }
 
         let num_items = items.len();
 
@@ -679,15 +700,24 @@ impl<H, T> Arc<HeaderSlice<H, [T]>> {
             let fake_slice: &mut [T] = slice::from_raw_parts_mut(buffer as *mut T, num_items);
             ptr = fake_slice as *mut [T] as *mut ArcInner<HeaderSlice<H, [T]>>;
 
+            let count;
+            #[cfg(feature = "static_arc")]
+            {
+                count = if is_static {
+                    atomic::AtomicUsize::new(STATIC_REFCOUNT)
+                } else {
+                    atomic::AtomicUsize::new(1)
+                };
+            }
+            #[cfg(not(feature = "static_arc"))]
+            {
+                count = atomic::AtomicUsize::new(1);
+            }
+
             // Write the data.
             //
             // Note that any panics here (i.e. from the iterator) are safe, since
             // we'll just leak the uninitialized memory.
-            let count = if is_static {
-                atomic::AtomicUsize::new(STATIC_REFCOUNT)
-            } else {
-                atomic::AtomicUsize::new(1)
-            };
             ptr::write(&mut ((*ptr).count), count);
             ptr::write(&mut ((*ptr).data.header), header);
             if num_items != 0 {
@@ -822,8 +852,9 @@ impl<H, T> ThinArc<H, T> {
         Arc::into_thin(Arc::from_header_and_iter(header, items))
     }
 
-    /// Create a static `ThinArc` for a HeaderSlice using the given header
-    /// struct and iterator to generate the slice.
+    /// `feature = "static_arc"` Create a static `ThinArc` for a HeaderSlice
+    /// using the given header struct and iterator to generate the slice.
+    #[cfg(feature = "static_arc")]
     pub fn static_from_header_and_iter<F, I>(header: H, items: I) -> Self
     where
         I: Iterator<Item = T> + ExactSizeIterator,
@@ -841,11 +872,15 @@ impl<H, T> ThinArc<H, T> {
         self.ptr.as_ptr() as *const ArcInner<T> as *const c_void
     }
 
-    /// If this is a static ThinArc, this returns null.
-    #[inline]
+    /// Returns the address on the heap of the Arc itself -- not the T within it -- for memory
+    /// reporting.
+    ///
+    /// `feature = "static_arc"` If this is a static ThinArc, this returns null.
+    // #[inline]
     pub fn heap_ptr(&self) -> *const c_void {
-        let is_static =
-            ThinArc::with_arc(self, |a| a.inner().count.load(Relaxed) == STATIC_REFCOUNT);
+        // Unclear if LLVM will see through `with_arc` in all cases, so don't
+        // leave it up to chance.
+        let is_static = cfg!(feature = "static_arc") && ThinArc::with_arc(self, |a| a.is_static());
         if is_static {
             ptr::null()
         } else {
