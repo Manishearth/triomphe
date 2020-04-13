@@ -950,7 +950,7 @@ impl<H: Eq, T: Eq> Eq for ThinArc<H, T> {}
 #[repr(transparent)]
 pub struct OffsetArc<T> {
     ptr: ptr::NonNull<T>,
-    // XXX(thom) doesn't this need PhantomData<T> (or PhantomData<Arc<T>>?)
+    phantom: PhantomData<T>,
 }
 
 unsafe impl<T: Sync + Send> Send for OffsetArc<T> {}
@@ -975,6 +975,7 @@ impl<T> Drop for OffsetArc<T> {
     fn drop(&mut self) {
         let _ = Arc::from_raw_offset(OffsetArc {
             ptr: self.ptr.clone(),
+            phantom: PhantomData,
         });
     }
 }
@@ -1059,6 +1060,7 @@ impl<T> Arc<T> {
         unsafe {
             OffsetArc {
                 ptr: ptr::NonNull::new_unchecked(Arc::into_raw(a) as *mut T),
+                phantom: PhantomData,
             }
         }
     }
