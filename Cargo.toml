@@ -14,14 +14,9 @@ path = "lib.rs"
 
 [features]
 std = []
-static_arc = []
 default = ["serde", "stable_deref_trait", "std"]
 
 [dependencies]
 memoffset = "0.5.3"
 serde = { version = "1.0", default-features = false, optional = true }
 stable_deref_trait = { version = "1.1.1", default-features = false, optional = true }
-
-
-[package.metadata.docs.rs]
-all-features = true

@@ -9,6 +9,5 @@ Fork of Arc. This has the following advantages over std::sync::Arc:
  * `triomphe::Arc` has can be constructed for dynamically-sized types via `from_header_and_iter`
  * `triomphe::ThinArc` provides thin-pointer `Arc`s to dynamically sized types
  * `triomphe::ArcUnion` is union of two `triomphe:Arc`s which fits inside one word of memory
- * If `feature = "static_arc"` is enabled, `Arc<T>` may hold references to static data, which don't do any refcounting.
 
 This crate is a version of `servo_arc` meant for general community use.
