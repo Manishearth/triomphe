@@ -8,10 +8,6 @@ description = "A fork of std::sync::Arc with some extra functionality and withou
 keywords = ["arc", "ffi", "sync", "data-structure"]
 categories = ["concurrency", "data-structures"]
 
-[lib]
-name = "triomphe"
-path = "lib.rs"
-
 [features]
 std = []
 default = ["serde", "stable_deref_trait", "std"]
