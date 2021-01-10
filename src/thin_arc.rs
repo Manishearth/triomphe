@@ -1,4 +1,5 @@
 use core::ffi::c_void;
+use core::hash::{Hash, Hasher};
 use core::iter::{ExactSizeIterator, Iterator};
 use core::marker::PhantomData;
 use core::mem;
@@ -8,7 +9,7 @@ use core::ptr;
 use core::slice;
 use core::usize;
 
-use super::{Arc, HeaderWithLength, HeaderSliceWithLength, ArcInner};
+use super::{Arc, ArcInner, HeaderSliceWithLength, HeaderWithLength};
 
 /// A "thin" `Arc` containing dynamically sized data
 ///
@@ -166,6 +167,12 @@ impl<H: PartialEq, T: PartialEq> PartialEq for ThinArc<H, T> {
 }
 
 impl<H: Eq, T: Eq> Eq for ThinArc<H, T> {}
+
+impl<H: Hash, T: Hash> Hash for ThinArc<H, T> {
+    fn hash<HSR: Hasher>(&self, state: &mut HSR) {
+        ThinArc::with_arc(self, |a| a.hash(state))
+    }
+}
 
 #[cfg(test)]
 mod tests {
