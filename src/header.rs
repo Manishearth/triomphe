@@ -125,7 +125,7 @@ pub struct HeaderWithLength<H> {
     pub header: H,
 
     /// The slice length.
-    pub(crate) length: usize,
+    pub length: usize,
 }
 
 impl<H> HeaderWithLength<H> {
