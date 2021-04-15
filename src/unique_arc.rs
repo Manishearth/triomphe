@@ -97,3 +97,17 @@ impl<T> DerefMut for UniqueArc<T> {
         unsafe { &mut (*self.0.ptr()).data }
     }
 }
+
+unsafe impl<T, U: ?Sized> unsize::CoerciblePtr<U> for UniqueArc<T> {
+    type Pointee = T;
+    type Output = UniqueArc<U>;
+    fn as_sized_ptr(&mut self) -> *mut T {
+        // Dispatch to the contained field.
+        unsize::CoerciblePtr::<U>::as_sized_ptr(&mut self.0)
+    }
+    unsafe fn replace_ptr(self, new: *mut U) -> UniqueArc<U> {
+        // Dispatch to the contained field, work around conflict of destructuring and Drop.
+        let inner = mem::ManuallyDrop::new(self);
+        UniqueArc(ptr::read(&inner.0).replace_ptr(new))
+    }
+}

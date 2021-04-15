@@ -31,19 +31,20 @@ extern crate memoffset;
 extern crate serde;
 #[cfg(feature = "stable_deref_trait")]
 extern crate stable_deref_trait;
+extern crate unsize;
 
 mod arc;
-mod header;
-mod arc_union;
 mod arc_borrow;
+mod arc_union;
+mod header;
 mod offset_arc;
 mod thin_arc;
 mod unique_arc;
 
 pub use arc::*;
-pub use header::*;
-pub use arc_union::*;
 pub use arc_borrow::*;
+pub use arc_union::*;
+pub use header::*;
 pub use offset_arc::*;
 pub use thin_arc::*;
 pub use unique_arc::*;
