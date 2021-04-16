@@ -16,3 +16,4 @@ default = ["serde", "stable_deref_trait", "std"]
 memoffset = "0.6"
 serde = { version = "1.0", default-features = false, optional = true }
 stable_deref_trait = { version = "1.1.1", default-features = false, optional = true }
+unsize = { version = "1.1", optional = true }

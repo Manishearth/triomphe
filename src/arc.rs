@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "stable_deref_trait")]
 use stable_deref_trait::{CloneStableDeref, StableDeref};
 
-use super::{ArcBorrow, OffsetArc, abort};
+use super::{abort, ArcBorrow, OffsetArc};
 
 /// A soft limit on the amount of references that may be made to an `Arc`.
 ///
@@ -91,10 +91,7 @@ impl<T> Arc<T> {
         // To find the corresponding pointer to the `ArcInner` we need
         // to subtract the offset of the `data` field from the pointer.
         let ptr = (ptr as *const u8).sub(offset_of!(ArcInner<T>, data));
-        Arc {
-            p: ptr::NonNull::new_unchecked(ptr as *mut ArcInner<T>),
-            phantom: PhantomData,
-        }
+        Arc::from_raw_inner(ptr as *mut ArcInner<T>)
     }
 
     /// Produce a pointer to the data that can be converted back
@@ -155,6 +152,17 @@ impl<T> Arc<T> {
 }
 
 impl<T: ?Sized> Arc<T> {
+    /// Construct an `Arc` from an allocated `ArcInner`.
+    /// # Safety
+    /// The `ptr` must point to a valid instance, allocated by an `Arc`. The reference could will
+    /// not be modified.
+    unsafe fn from_raw_inner(ptr: *mut ArcInner<T>) -> Self {
+        Arc {
+            p: ptr::NonNull::new_unchecked(ptr),
+            phantom: PhantomData,
+        }
+    }
+
     #[inline]
     fn inner(&self) -> &ArcInner<T> {
         // This unsafety is ok because while this arc is alive we're guaranteed
@@ -436,5 +444,59 @@ impl<T: Serialize> Serialize for Arc<T> {
         S: ::serde::ser::Serializer,
     {
         (**self).serialize(serializer)
+    }
+}
+
+// Safety:
+// This implementation must guarantee that it is sound to call replace_ptr with an unsized variant
+// of the pointer retuned in `as_sized_ptr`. The basic property of Unsize coercion is that safety
+// variants and layout is unaffected. The Arc does not rely on any other property of T. This makes
+// any unsized ArcInner valid for being shared with the sized variant.
+// This does _not_ mean that any T can be unsized into an U, but rather than if such unsizing is
+// possible then it can be propagated into the Arc<T>.
+#[cfg(feature = "unsize")]
+unsafe impl<T, U: ?Sized> unsize::CoerciblePtr<U> for Arc<T> {
+    type Pointee = T;
+    type Output = Arc<U>;
+
+    fn as_sized_ptr(&mut self) -> *mut T {
+        // Returns a pointer to the complete inner. The unsizing itself won't care about the
+        // pointer value and promises not to offset it.
+        self.p.as_ptr() as *mut T
+    }
+
+    unsafe fn replace_ptr(self, new: *mut U) -> Arc<U> {
+        // Fix the provenance by ensuring that of `self` is used.
+        let inner = ManuallyDrop::new(self);
+        let p = inner.p.as_ptr() as *mut T;
+        // Safety: This points to an ArcInner of the previous self and holds shared ownership since
+        // the old pointer never decremented the reference count. The caller upholds that `new` is
+        // an unsized version of the previous ArcInner. This assumes that unsizing to the fat
+        // pointer tag of an `ArcInner<U>` and `U` is isomorphic under a direct pointer cast since
+        // in reality we unsized *mut T to *mut U at the address of the ArcInner. This is the case
+        // for all currently envisioned unsized types where the tag of T and ArcInner<T> are simply
+        // the same.
+        Arc::from_raw_inner(p.replace_ptr(new) as *mut ArcInner<U>)
+    }
+}
+
+#[cfg(test)]
+#[cfg(feature = "unsize")]
+mod tests {
+    use crate::arc::Arc;
+    use unsize::{Coercion, CoerceUnsize};
+
+    #[test]
+    fn coerce_to_slice() {
+        let x = Arc::new([0u8; 4]);
+        let y: Arc<[u8]> = x.clone().unsize(Coercion::to_slice());
+        assert_eq!(x.as_ptr(), y.as_ptr());
+    }
+
+    #[test]
+    fn coerce_to_dyn() {
+        let x: Arc<_> = Arc::new(|| 42u32);
+        let x: Arc<_> = x.unsize(Coercion::<_, dyn Fn() -> u32>::to_fn());
+        assert_eq!((*x)(), 42);
     }
 }

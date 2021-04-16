@@ -9,7 +9,7 @@ use super::{Arc, ArcBorrow};
 /// An `Arc`, except it holds a pointer to the T instead of to the
 /// entire ArcInner.
 ///
-/// An `OffsetArc<T>` has the same layout and ABI as a non-null 
+/// An `OffsetArc<T>` has the same layout and ABI as a non-null
 /// `const T*` in C, and may be used in FFI function signatures.
 ///
 /// ```text

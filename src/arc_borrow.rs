@@ -21,7 +21,7 @@ use super::Arc;
 /// without needing to worry about where the `Arc<T>` is.
 #[derive(Debug, Eq, PartialEq)]
 #[repr(transparent)]
-pub struct ArcBorrow<'a, T: 'a>(pub(crate) &'a T);
+pub struct ArcBorrow<'a, T: ?Sized + 'a>(pub(crate) &'a T);
 
 impl<'a, T> Copy for ArcBorrow<'a, T> {}
 impl<'a, T> Clone for ArcBorrow<'a, T> {
@@ -43,6 +43,8 @@ impl<'a, T> ArcBorrow<'a, T> {
 
     /// For constructing from a reference known to be Arc-backed,
     /// e.g. if we obtain such a reference over FFI
+    /// TODO: should from_ref be relaxed to unsized types? It can't be
+    /// converted back to an Arc right now for unsized types.
     #[inline]
     pub unsafe fn from_ref(r: &'a T) -> Self {
         ArcBorrow(r)
@@ -87,5 +89,29 @@ impl<'a, T> Deref for ArcBorrow<'a, T> {
     #[inline]
     fn deref(&self) -> &T {
         self.0
+    }
+}
+
+// Safety:
+// This implementation must guarantee that it is sound to call replace_ptr with an unsized variant
+// of the pointer retuned in `as_sized_ptr`. We leverage unsizing the contained reference. This
+// continues to point to the data of an ArcInner. The reference count remains untouched which is
+// correct since the number of owners did not change. This implies the returned instance fulfills
+// its safety invariants.
+#[cfg(feature = "unsize")]
+unsafe impl<'lt, T: 'lt, U: ?Sized + 'lt> unsize::CoerciblePtr<U> for ArcBorrow<'lt, T> {
+    type Pointee = T;
+    type Output = ArcBorrow<'lt, U>;
+
+    fn as_sized_ptr(&mut self) -> *mut T {
+        // Returns a pointer to the inner data. We do not need to care about any particular
+        // provenance here, only the pointer value, which we need to reconstruct the new pointer.
+        self.0 as *const T as *mut T
+    }
+
+    unsafe fn replace_ptr(self, new: *mut U) -> ArcBorrow<'lt, U> {
+        let inner = ManuallyDrop::new(self);
+        // Safety: backed by the same Arc that backed `self`.
+        ArcBorrow(inner.0.replace_ptr(new))
     }
 }
