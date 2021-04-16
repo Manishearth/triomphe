@@ -454,6 +454,7 @@ impl<T: Serialize> Serialize for Arc<T> {
 // any unsized ArcInner valid for being shared with the sized variant.
 // This does _not_ mean that any T can be unsized into an U, but rather than if such unsizing is
 // possible then it can be propagated into the Arc<T>.
+#[cfg(feature = "unsize")]
 unsafe impl<T, U: ?Sized> unsize::CoerciblePtr<U> for Arc<T> {
     type Pointee = T;
     type Output = Arc<U>;
@@ -480,6 +481,7 @@ unsafe impl<T, U: ?Sized> unsize::CoerciblePtr<U> for Arc<T> {
 }
 
 #[cfg(test)]
+#[cfg(feature = "unsize")]
 mod tests {
     use crate::arc::Arc;
     use unsize::{Coercion, CoerceUnsize};

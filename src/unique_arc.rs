@@ -103,6 +103,7 @@ impl<T> DerefMut for UniqueArc<T> {
 // this can not be used to violate the safety invariants of UniqueArc, which require that we can not
 // duplicate the Arc, such that replace_ptr returns a valid instance. This holds since it consumes
 // a unique owner of the contained ArcInner.
+#[cfg(feature = "unsize")]
 unsafe impl<T, U: ?Sized> unsize::CoerciblePtr<U> for UniqueArc<T> {
     type Pointee = T;
     type Output = UniqueArc<U>;

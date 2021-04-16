@@ -98,6 +98,7 @@ impl<'a, T> Deref for ArcBorrow<'a, T> {
 // continues to point to the data of an ArcInner. The reference count remains untouched which is
 // correct since the number of owners did not change. This implies the returned instance fulfills
 // its safety invariants.
+#[cfg(feature = "unsize")]
 unsafe impl<'lt, T: 'lt, U: ?Sized + 'lt> unsize::CoerciblePtr<U> for ArcBorrow<'lt, T> {
     type Pointee = T;
     type Output = ArcBorrow<'lt, U>;

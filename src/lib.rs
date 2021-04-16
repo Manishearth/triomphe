@@ -31,6 +31,7 @@ extern crate memoffset;
 extern crate serde;
 #[cfg(feature = "stable_deref_trait")]
 extern crate stable_deref_trait;
+#[cfg(feature = "unsize")]
 extern crate unsize;
 
 mod arc;
