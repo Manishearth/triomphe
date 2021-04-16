@@ -152,6 +152,10 @@ impl<T> Arc<T> {
 }
 
 impl<T: ?Sized> Arc<T> {
+    /// Construct an `Arc` from an allocated `ArcInner`.
+    /// # Safety
+    /// The `ptr` must point to a valid instance, allocated by an `Arc`. The reference could will
+    /// not be modified.
     unsafe fn from_raw_inner(ptr: *mut ArcInner<T>) -> Self {
         Arc {
             p: ptr::NonNull::new_unchecked(ptr),
@@ -443,18 +447,34 @@ impl<T: Serialize> Serialize for Arc<T> {
     }
 }
 
+// Safety:
+// This implementation must guarantee that it is sound to call replace_ptr with an unsized variant
+// of the pointer retuned in `as_sized_ptr`. The basic property of Unsize coercion is that safety
+// variants and layout is unaffected. The Arc does not rely on any other property of T. This makes
+// any unsized ArcInner valid for being shared with the sized variant.
+// This does _not_ mean that any T can be unsized into an U, but rather than if such unsizing is
+// possible then it can be propagated into the Arc<T>.
 unsafe impl<T, U: ?Sized> unsize::CoerciblePtr<U> for Arc<T> {
     type Pointee = T;
     type Output = Arc<U>;
+
     fn as_sized_ptr(&mut self) -> *mut T {
         // Returns a pointer to the complete inner. The unsizing itself won't care about the
         // pointer value and promises not to offset it.
         self.p.as_ptr() as *mut T
     }
+
     unsafe fn replace_ptr(self, new: *mut U) -> Arc<U> {
         // Fix the provenance by ensuring that of `self` is used.
         let inner = ManuallyDrop::new(self);
         let p = inner.p.as_ptr() as *mut T;
+        // Safety: This points to an ArcInner of the previous self and holds shared ownership since
+        // the old pointer never decremented the reference count. The caller upholds that `new` is
+        // an unsized version of the previous ArcInner. This assumes that unsizing to the fat
+        // pointer tag of an `ArcInner<U>` and `U` is isomorphic under a direct pointer cast since
+        // in reality we unsized *mut T to *mut U at the address of the ArcInner. This is the case
+        // for all currently envisioned unsized types where the tag of T and ArcInner<T> are simply
+        // the same.
         Arc::from_raw_inner(p.replace_ptr(new) as *mut ArcInner<U>)
     }
 }
