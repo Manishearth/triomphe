@@ -99,7 +99,7 @@ impl<T> Arc<T> {
     /// It has the benefits of an `&T` but also knows about the underlying refcount
     /// and can be converted into more `Arc<T>`s if necessary.
     #[inline]
-    pub fn borrow_arc<'a>(&'a self) -> ArcBorrow<'a, T> {
+    pub fn borrow_arc(&self) -> ArcBorrow<'_, T> {
         ArcBorrow(&**self)
     }
 
@@ -335,6 +335,7 @@ impl<T: ?Sized + PartialEq> PartialEq for Arc<T> {
         Self::ptr_eq(self, other) || *(*self) == *(*other)
     }
 
+    #[allow(clippy::partialeq_ne_impl)]
     fn ne(&self, other: &Arc<T>) -> bool {
         !Self::ptr_eq(self, other) && *(*self) != *(*other)
     }
@@ -484,7 +485,7 @@ unsafe impl<T, U: ?Sized> unsize::CoerciblePtr<U> for Arc<T> {
 #[cfg(feature = "unsize")]
 mod tests {
     use crate::arc::Arc;
-    use unsize::{Coercion, CoerceUnsize};
+    use unsize::{CoerceUnsize, Coercion};
 
     #[test]
     fn coerce_to_slice() {
