@@ -56,7 +56,7 @@ impl<T> Clone for OffsetArc<T> {
 impl<T> Drop for OffsetArc<T> {
     fn drop(&mut self) {
         let _ = Arc::from_raw_offset(OffsetArc {
-            ptr: self.ptr.clone(),
+            ptr: self.ptr,
             phantom: PhantomData,
         });
     }
@@ -73,6 +73,7 @@ impl<T: PartialEq> PartialEq for OffsetArc<T> {
         *(*self) == *(*other)
     }
 
+    #[allow(clippy::partialeq_ne_impl)]
     fn ne(&self, other: &OffsetArc<T>) -> bool {
         *(*self) != *(*other)
     }
@@ -89,11 +90,9 @@ impl<T> OffsetArc<T> {
         // Synthesize transient Arc, which never touches the refcount of the ArcInner.
         let transient = unsafe { ManuallyDrop::new(Arc::from_raw(self.ptr.as_ptr())) };
 
-        // Expose the transient Arc to the callback, which may clone it if it wants.
-        let result = f(&transient);
-
-        // Forward the result.
-        result
+        // Expose the transient Arc to the callback, which may clone it if it wants
+        // and forward the result to the user
+        f(&transient)
     }
 
     /// If uniquely owned, provide a mutable reference
@@ -129,7 +128,7 @@ impl<T> OffsetArc<T> {
     /// Produce a pointer to the data that can be converted back
     /// to an `Arc`
     #[inline]
-    pub fn borrow_arc<'a>(&'a self) -> ArcBorrow<'a, T> {
+    pub fn borrow_arc(&self) -> ArcBorrow<'_, T> {
         ArcBorrow(&**self)
     }
 }

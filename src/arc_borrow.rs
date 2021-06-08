@@ -1,6 +1,7 @@
 use core::mem;
 use core::mem::ManuallyDrop;
 use core::ops::Deref;
+use core::ptr;
 
 use super::Arc;
 
@@ -54,7 +55,7 @@ impl<'a, T> ArcBorrow<'a, T> {
     /// true if they come from the same allocation
     #[inline]
     pub fn ptr_eq(this: &Self, other: &Self) -> bool {
-        this.0 as *const T == other.0 as *const T
+        ptr::eq(this.0 as *const T, other.0 as *const T)
     }
 
     /// Temporarily converts |self| into a bonafide Arc and exposes it to the
@@ -68,11 +69,9 @@ impl<'a, T> ArcBorrow<'a, T> {
         // Synthesize transient Arc, which never touches the refcount.
         let transient = unsafe { ManuallyDrop::new(Arc::from_raw(self.0)) };
 
-        // Expose the transient Arc to the callback, which may clone it if it wants.
-        let result = f(&transient);
-
-        // Forward the result.
-        result
+        // Expose the transient Arc to the callback, which may clone it if it wants
+        // and forward the result to the user
+        f(&transient)
     }
 
     /// Similar to deref, but uses the lifetime |a| rather than the lifetime of

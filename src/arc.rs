@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "stable_deref_trait")]
 use stable_deref_trait::{CloneStableDeref, StableDeref};
 
-use super::{abort, ArcBorrow, OffsetArc};
+use crate::{abort, ArcBorrow, OffsetArc, UniqueArc};
 
 /// A soft limit on the amount of references that may be made to an `Arc`.
 ///
@@ -99,7 +99,7 @@ impl<T> Arc<T> {
     /// It has the benefits of an `&T` but also knows about the underlying refcount
     /// and can be converted into more `Arc<T>`s if necessary.
     #[inline]
-    pub fn borrow_arc<'a>(&'a self) -> ArcBorrow<'a, T> {
+    pub fn borrow_arc(&self) -> ArcBorrow<'_, T> {
         ArcBorrow(&**self)
     }
 
@@ -149,6 +149,27 @@ impl<T> Arc<T> {
         mem::forget(a);
         unsafe { Arc::from_raw(ptr) }
     }
+
+    /// Returns the inner value, if the [`Arc`] has exactly one strong reference.
+    ///
+    /// Otherwise, an [`Err`] is returned with the same [`Arc`] that was
+    /// passed in.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use triomphe::Arc;
+    ///
+    /// let x = Arc::new(3);
+    /// assert_eq!(Arc::try_unwrap(x), Ok(3));
+    ///
+    /// let x = Arc::new(4);
+    /// let _y = Arc::clone(&x);
+    /// assert_eq!(*Arc::try_unwrap(x).unwrap_err(), 4);
+    /// ```
+    pub fn try_unwrap(this: Self) -> Result<T, Self> {
+        Self::try_unique(this).map(UniqueArc::into_inner)
+    }
 }
 
 impl<T: ?Sized> Arc<T> {
@@ -164,7 +185,7 @@ impl<T: ?Sized> Arc<T> {
     }
 
     #[inline]
-    fn inner(&self) -> &ArcInner<T> {
+    pub(super) fn inner(&self) -> &ArcInner<T> {
         // This unsafety is ok because while this arc is alive we're guaranteed
         // that the inner pointer is valid. Furthermore, we know that the
         // `ArcInner` structure itself is `Sync` because the inner data is
@@ -238,7 +259,7 @@ impl<T: ?Sized> Deref for Arc<T> {
     }
 }
 
-impl<T: Clone> Arc<T> {
+impl<T: Clone + ?Sized> Arc<T> {
     /// Makes a mutable reference to the `Arc`, cloning if necessary
     ///
     /// This is functionally equivalent to [`Arc::make_mut`][mm] from the standard library.
@@ -289,7 +310,42 @@ impl<T: ?Sized> Arc<T> {
         // See the extensive discussion in [1] for why this needs to be Acquire.
         //
         // [1] https://github.com/servo/servo/issues/21186
-        self.inner().count.load(Acquire) == 1
+        Self::count(self) == 1
+    }
+
+    /// Gets the number of [`Arc`] pointers to this allocation
+    pub fn count(this: &Self) -> usize {
+        this.inner().count.load(Acquire)
+    }
+
+    /// Returns a [`UniqueArc`] if the [`Arc`] has exactly one strong reference.
+    ///
+    /// Otherwise, an [`Err`] is returned with the same [`Arc`] that was
+    /// passed in.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use triomphe::{Arc, UniqueArc};
+    ///
+    /// let x = Arc::new(3);
+    /// assert_eq!(UniqueArc::into_inner(Arc::try_unique(x).unwrap()), 3);
+    ///
+    /// let x = Arc::new(4);
+    /// let _y = Arc::clone(&x);
+    /// assert_eq!(
+    ///     *Arc::try_unique(x).map(UniqueArc::into_inner).unwrap_err(),
+    ///     4,
+    /// );
+    /// ```
+    pub fn try_unique(this: Self) -> Result<UniqueArc<T>, Self> {
+        if this.is_unique() {
+            // Safety: The current arc is unique and making a `UniqueArc`
+            //         from it is sound
+            unsafe { Ok(UniqueArc::from_arc(this)) }
+        } else {
+            Err(this)
+        }
     }
 }
 
@@ -335,6 +391,7 @@ impl<T: ?Sized + PartialEq> PartialEq for Arc<T> {
         Self::ptr_eq(self, other) || *(*self) == *(*other)
     }
 
+    #[allow(clippy::partialeq_ne_impl)]
     fn ne(&self, other: &Arc<T>) -> bool {
         !Self::ptr_eq(self, other) && *(*self) != *(*other)
     }
@@ -481,12 +538,28 @@ unsafe impl<T, U: ?Sized> unsize::CoerciblePtr<U> for Arc<T> {
 }
 
 #[cfg(test)]
-#[cfg(feature = "unsize")]
 mod tests {
     use crate::arc::Arc;
-    use unsize::{Coercion, CoerceUnsize};
+    #[cfg(feature = "unsize")]
+    use unsize::{CoerceUnsize, Coercion};
 
     #[test]
+    fn try_unwrap() {
+        let x = Arc::new(100usize);
+        let y = x.clone();
+
+        // The count should be two so `try_unwrap()` should fail
+        assert_eq!(Arc::count(&x), 2);
+        assert!(Arc::try_unwrap(x).is_err());
+
+        // Since `x` has now been dropped, the count should be 1
+        // and `try_unwrap()` should succeed
+        assert_eq!(Arc::count(&y), 1);
+        assert_eq!(Arc::try_unwrap(y), Ok(100));
+    }
+
+    #[test]
+    #[cfg(feature = "unsize")]
     fn coerce_to_slice() {
         let x = Arc::new([0u8; 4]);
         let y: Arc<[u8]> = x.clone().unsize(Coercion::to_slice());
@@ -494,6 +567,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "unsize")]
     fn coerce_to_dyn() {
         let x: Arc<_> = Arc::new(|| 42u32);
         let x: Arc<_> = x.unsize(Coercion::<_, dyn Fn() -> u32>::to_fn());

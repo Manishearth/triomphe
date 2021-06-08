@@ -63,11 +63,9 @@ impl<H, T> ThinArc<H, T> {
             })
         };
 
-        // Expose the transient Arc to the callback, which may clone it if it wants.
-        let result = f(&transient);
-
-        // Forward the result.
-        result
+        // Expose the transient Arc to the callback, which may clone it if it wants
+        // and forward the result to the user
+        f(&transient)
     }
 
     /// Creates a `ThinArc` for a HeaderSlice using the given header struct and
@@ -223,6 +221,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::redundant_clone, clippy::eq_op)]
     fn slices_and_thin() {
         let mut canary = atomic::AtomicUsize::new(0);
         let c = Canary(&mut canary as *mut atomic::AtomicUsize);
