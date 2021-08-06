@@ -33,6 +33,8 @@ extern crate serde;
 extern crate stable_deref_trait;
 #[cfg(feature = "unsize")]
 extern crate unsize;
+#[cfg(feature = "arc-swap")]
+extern crate arc_swap;
 
 mod arc;
 mod arc_borrow;
@@ -41,6 +43,8 @@ mod header;
 mod offset_arc;
 mod thin_arc;
 mod unique_arc;
+#[cfg(feature = "arc-swap")]
+mod arc_swap_support;
 
 pub use arc::*;
 pub use arc_borrow::*;
