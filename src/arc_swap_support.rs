@@ -1,8 +1,8 @@
 use arc_swap::RefCnt;
 
+use crate::{Arc, ThinArc};
 use core::ffi::c_void;
 use core::ptr::NonNull;
-use crate::{Arc, ThinArc};
 
 unsafe impl<H, T> RefCnt for ThinArc<H, T> {
     type Base = c_void;

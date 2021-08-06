@@ -100,7 +100,7 @@ impl<H, T> ThinArc<H, T> {
     /// ThinArc::into_raw.
     ///
     /// The user of from_raw has to make sure a specific value of T is only dropped once.
-    /// 
+    ///
     /// This function is unsafe because improper use may lead to memory unsafety,
     /// even if the returned ThinArc is never accessed.
     #[inline]
@@ -279,10 +279,8 @@ mod tests {
         let v = vec![5, 6];
         let header = HeaderWithLength::new(c, v.len());
         {
-            type ThinArcCanary = ThinArc::<Canary, u32>;
-            let x: ThinArcCanary = Arc::into_thin(
-                Arc::from_header_and_iter(header, v.into_iter())
-            );
+            type ThinArcCanary = ThinArc<Canary, u32>;
+            let x: ThinArcCanary = Arc::into_thin(Arc::from_header_and_iter(header, v.into_iter()));
             let ptr = x.as_ptr();
             let nonnull_ptr = x.into_raw();
 

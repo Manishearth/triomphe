@@ -27,24 +27,24 @@ extern crate core;
 
 #[macro_use]
 extern crate memoffset;
+#[cfg(feature = "arc-swap")]
+extern crate arc_swap;
 #[cfg(feature = "serde")]
 extern crate serde;
 #[cfg(feature = "stable_deref_trait")]
 extern crate stable_deref_trait;
 #[cfg(feature = "unsize")]
 extern crate unsize;
-#[cfg(feature = "arc-swap")]
-extern crate arc_swap;
 
 mod arc;
 mod arc_borrow;
+#[cfg(feature = "arc-swap")]
+mod arc_swap_support;
 mod arc_union;
 mod header;
 mod offset_arc;
 mod thin_arc;
 mod unique_arc;
-#[cfg(feature = "arc-swap")]
-mod arc_swap_support;
 
 pub use arc::*;
 pub use arc_borrow::*;
