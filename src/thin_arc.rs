@@ -92,6 +92,8 @@ impl<H, T> ThinArc<H, T> {
         self.ptr()
     }
 
+    /// # Safety
+    ///
     /// Constructs an ThinArc from a raw pointer.
     ///
     /// The raw pointer must have been previously returned by a call to
@@ -102,7 +104,7 @@ impl<H, T> ThinArc<H, T> {
     /// This function is unsafe because improper use may lead to memory unsafety,
     /// even if the returned ThinArc is never accessed.
     #[inline]
-    pub fn from_raw(ptr: ptr::NonNull<c_void>) -> Self {
+    pub unsafe fn from_raw(ptr: ptr::NonNull<c_void>) -> Self {
         Self {
             ptr: ptr.cast(),
             phantom: PhantomData,
@@ -286,7 +288,7 @@ mod tests {
 
             assert_eq!(nonnull_ptr.as_ptr() as *const _, ptr);
 
-            let _x = ThinArcCanary::from_raw(nonnull_ptr);
+            let _x = unsafe { ThinArcCanary::from_raw(nonnull_ptr) };
         }
         assert_eq!(canary.load(Acquire), 1);
     }
