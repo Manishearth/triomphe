@@ -571,7 +571,7 @@ mod tests {
     fn coerce_to_slice() {
         let x = Arc::new([0u8; 4]);
         let y: Arc<[u8]> = x.clone().unsize(Coercion::to_slice());
-        assert_eq!(x.as_ptr(), y.as_ptr());
+        assert_eq!((*x).as_ptr(), (*y).as_ptr());
     }
 
     #[test]
