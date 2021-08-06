@@ -104,19 +104,19 @@ impl<H, T> ThinArc<H, T> {
     /// This function is unsafe because improper use may lead to memory unsafety,
     /// even if the returned ThinArc is never accessed.
     #[inline]
-    pub unsafe fn from_raw(ptr: ptr::NonNull<c_void>) -> Self {
+    pub unsafe fn from_raw(ptr: *const c_void) -> Self {
         Self {
-            ptr: ptr.cast(),
+            ptr: ptr::NonNull::new_unchecked(ptr as *mut c_void).cast(),
             phantom: PhantomData,
         }
     }
 
     /// Consume ThinArc and returned the wrapped pointer.
     #[inline]
-    pub fn into_raw(self) -> ptr::NonNull<c_void> {
+    pub fn into_raw(self) -> *const c_void {
         let ptr = self.ptr.cast();
         mem::forget(self);
-        ptr
+        ptr.as_ptr()
     }
 
     /// Provides a raw pointer to the data.
@@ -282,11 +282,10 @@ mod tests {
             type ThinArcCanary = ThinArc<Canary, u32>;
             let x: ThinArcCanary = Arc::into_thin(Arc::from_header_and_iter(header, v.into_iter()));
             let ptr = x.as_ptr();
-            let nonnull_ptr = x.into_raw();
 
-            assert_eq!(nonnull_ptr.as_ptr() as *const _, ptr);
+            assert_eq!(x.into_raw(), ptr);
 
-            let _x = unsafe { ThinArcCanary::from_raw(nonnull_ptr) };
+            let _x = unsafe { ThinArcCanary::from_raw(ptr) };
         }
         assert_eq!(canary.load(Acquire), 1);
     }
