@@ -75,9 +75,17 @@ impl<T> Arc<T> {
     /// It is recommended to use OffsetArc for this.
     #[inline]
     pub fn into_raw(this: Self) -> *const T {
-        let ptr = unsafe { &((*this.ptr()).data) as *const _ };
+        let ptr = this.as_ptr();
         mem::forget(this);
         ptr
+    }
+
+    /// Returns the raw pointer.
+    ///
+    /// Same as into_raw except `self` isn't consumed.
+    #[inline]
+    pub fn as_ptr(&self) -> *const T {
+        unsafe { &((*self.ptr()).data) as *const _ }
     }
 
     /// Reconstruct the Arc<T> from a raw pointer obtained from into_raw()
