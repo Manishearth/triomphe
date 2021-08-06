@@ -91,6 +91,39 @@ impl<H, T> ThinArc<H, T> {
     pub fn heap_ptr(&self) -> *const c_void {
         self.ptr()
     }
+
+    /// Constructs an ThinArc from a raw pointer.
+    ///
+    /// The raw pointer must have been previously returned by a call to
+    /// ThinArc::into_raw.
+    ///
+    /// The user of from_raw has to make sure a specific value of T is only dropped once.
+    /// 
+    /// This function is unsafe because improper use may lead to memory unsafety,
+    /// even if the returned ThinArc is never accessed.
+    #[inline]
+    pub fn from_raw(ptr: ptr::NonNull<c_void>) -> Self {
+        Self {
+            ptr: ptr.cast(),
+            phantom: PhantomData,
+        }
+    }
+
+    /// Consume ThinArc and returned the wrapped pointer.
+    #[inline]
+    pub fn into_raw(self) -> ptr::NonNull<c_void> {
+        let ptr = self.ptr.cast();
+        mem::forget(self);
+        ptr
+    }
+
+    /// Provides a raw pointer to the data.
+    /// The counts are not affected in any way and the ThinArc is not consumed.
+    /// The pointer is valid for as long as there are strong counts in the ThinArc.
+    #[inline]
+    pub fn as_ptr(&self) -> *const c_void {
+        self.ptr()
+    }
 }
 
 impl<H, T> Deref for ThinArc<H, T> {
@@ -233,6 +266,27 @@ mod tests {
             let _ = y.clone();
             let _ = x == x;
             Arc::from_thin(x.clone());
+        }
+        assert_eq!(canary.load(Acquire), 1);
+    }
+
+    #[test]
+    fn into_raw_and_from_raw() {
+        let mut canary = atomic::AtomicUsize::new(0);
+        let c = Canary(&mut canary as *mut atomic::AtomicUsize);
+        let v = vec![5, 6];
+        let header = HeaderWithLength::new(c, v.len());
+        {
+            type ThinArcCanary = ThinArc::<Canary, u32>;
+            let x: ThinArcCanary = Arc::into_thin(
+                Arc::from_header_and_iter(header, v.into_iter())
+            );
+            let ptr = x.as_ptr();
+            let nonnull_ptr = x.into_raw();
+
+            assert_eq!(nonnull_ptr.as_ptr() as *const _, ptr);
+
+            let _x = ThinArcCanary::from_raw(nonnull_ptr);
         }
         assert_eq!(canary.load(Acquire), 1);
     }
