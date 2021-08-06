@@ -18,7 +18,7 @@ unsafe impl<H, T> RefCnt for ThinArc<H, T> {
     }
 
     #[inline]
-    unsafe fn from_ptr(ptr: *const Self::Base) -> ThinArc<H, T> {
+    unsafe fn from_ptr(ptr: *const Self::Base) -> Self {
         ThinArc::from_raw(NonNull::new_unchecked(ptr as *mut _))
     }
 }
