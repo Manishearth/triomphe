@@ -12,7 +12,6 @@ use core::mem::{ManuallyDrop, MaybeUninit};
 use core::ops::Deref;
 use core::ptr;
 use core::slice;
-use core::sync::atomic;
 use core::sync::atomic::Ordering::{Acquire, Relaxed, Release};
 use core::{isize, usize};
 
@@ -24,7 +23,7 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "stable_deref_trait")]
 use stable_deref_trait::{CloneStableDeref, StableDeref};
 
-use crate::{abort, ArcBorrow, OffsetArc, UniqueArc};
+use crate::{abort, atomic, ArcBorrow, OffsetArc, UniqueArc};
 
 /// A soft limit on the amount of references that may be made to an `Arc`.
 ///

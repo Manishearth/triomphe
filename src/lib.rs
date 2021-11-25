@@ -36,6 +36,13 @@ extern crate stable_deref_trait;
 #[cfg(feature = "unsize")]
 extern crate unsize;
 
+#[cfg(feature = "atomic-polyfill")]
+extern crate atomic_polyfill;
+#[cfg(feature = "atomic-polyfill")]
+use atomic_polyfill as atomic;
+#[cfg(not(feature = "atomic-polyfill"))]
+use core::sync::atomic;
+
 mod arc;
 mod arc_borrow;
 #[cfg(feature = "arc-swap")]
