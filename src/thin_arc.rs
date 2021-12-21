@@ -1,4 +1,5 @@
 use core::ffi::c_void;
+use core::fmt;
 use core::hash::{Hash, Hasher};
 use core::iter::{ExactSizeIterator, Iterator};
 use core::marker::PhantomData;
@@ -204,6 +205,18 @@ impl<H: Eq, T: Eq> Eq for ThinArc<H, T> {}
 impl<H: Hash, T: Hash> Hash for ThinArc<H, T> {
     fn hash<HSR: Hasher>(&self, state: &mut HSR) {
         ThinArc::with_arc(self, |a| a.hash(state))
+    }
+}
+
+impl<H: fmt::Debug, T: fmt::Debug> fmt::Debug for ThinArc<H, T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Debug::fmt(&**self, f)
+    }
+}
+
+impl<H, T> fmt::Pointer for ThinArc<H, T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Pointer::fmt(&self.ptr(), f)
     }
 }
 
