@@ -79,6 +79,16 @@ impl<H, T> ThinArc<H, T> {
         Arc::into_thin(Arc::from_header_and_iter(header, items))
     }
 
+    /// Creates a `ThinArc` for a HeaderSlice using the given header struct and
+    /// a slice to copy.
+    pub fn from_header_and_slice(header: H, items: &[T]) -> Self
+    where
+        T: Copy,
+    {
+        let header = HeaderWithLength::new(header, items.len());
+        Arc::into_thin(Arc::from_header_and_slice(header, items))
+    }
+
     /// Returns the address on the heap of the ThinArc itself -- not the T
     /// within it -- for memory reporting.
     #[inline]
@@ -271,6 +281,23 @@ mod tests {
     #[test]
     #[allow(clippy::redundant_clone, clippy::eq_op)]
     fn slices_and_thin() {
+        let mut canary = atomic::AtomicUsize::new(0);
+        let c = Canary(&mut canary as *mut atomic::AtomicUsize);
+        let v = vec![5, 6];
+        let header = HeaderWithLength::new(c, v.len());
+        {
+            let x = Arc::into_thin(Arc::from_header_and_slice(header, &v));
+            let y = ThinArc::with_arc(&x, |q| q.clone());
+            let _ = y.clone();
+            let _ = x == x;
+            Arc::from_thin(x.clone());
+        }
+        assert_eq!(canary.load(Acquire), 1);
+    }
+
+    #[test]
+    #[allow(clippy::redundant_clone, clippy::eq_op)]
+    fn iter_and_thin() {
         let mut canary = atomic::AtomicUsize::new(0);
         let c = Canary(&mut canary as *mut atomic::AtomicUsize);
         let v = vec![5, 6];
