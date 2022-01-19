@@ -4,10 +4,9 @@ use core::marker::PhantomData;
 use core::mem;
 use core::ptr;
 use core::slice;
-use core::sync::atomic;
 use core::usize;
 
-use super::{Arc, ArcInner};
+use super::{atomic, Arc, ArcInner};
 
 /// Structure to allow Arc-managing some fixed-sized data and a variably-sized
 /// slice in a single allocation.

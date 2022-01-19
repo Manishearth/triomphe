@@ -1,10 +1,10 @@
+use super::atomic::AtomicUsize;
 use alloc::{alloc::Layout, boxed::Box};
 use core::convert::TryFrom;
 use core::marker::PhantomData;
 use core::mem::{ManuallyDrop, MaybeUninit};
 use core::ops::{Deref, DerefMut};
 use core::ptr::{self, NonNull};
-use core::sync::atomic::AtomicUsize;
 
 use super::{Arc, ArcInner};
 
