@@ -35,8 +35,11 @@ extern crate stable_deref_trait;
 extern crate unsize;
 
 /// Calculates the offset of the specified field from the start of the named struct.
+/// This macro is impossible to be const until feature(const_ptr_offset_from) is stable.
 macro_rules! offset_of {
     ($ty: path, $field: tt) => {{
+        // ensure the type is a named struct
+        // ensure the field exists and is accessible
         let $ty { $field: _, .. };
 
         let uninit = <::core::mem::MaybeUninit<$ty>>::uninit(); // const since 1.36
