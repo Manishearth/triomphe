@@ -26,10 +26,16 @@ jobs:
       run: rustup toolchain install nightly --component miri --profile minimal
     - name: Miri Test
       run: cargo +nightly miri test
+      env:
+        MIRIFLAGS: -Zmiri-tag-raw-pointers
     - name: Test --no-default-features
       run: cargo +nightly miri test --no-default-features
+      env:
+        MIRIFLAGS: -Zmiri-tag-raw-pointers
     - name: Test --all-features
       run: cargo +nightly miri test --all-features
+      env:
+        MIRIFLAGS: -Zmiri-tag-raw-pointers
 
   thread_sanitizer:
     runs-on: ubuntu-latest

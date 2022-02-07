@@ -43,7 +43,7 @@ fn thin_to_thick<H, T>(
     thin: *mut ArcInner<HeaderSliceWithLength<H, [T; 0]>>,
 ) -> *mut ArcInner<HeaderSliceWithLength<H, [T]>> {
     let len = unsafe { (*thin).data.header.length };
-    let fake_slice: *mut [T] = unsafe { slice::from_raw_parts_mut(thin as *mut T, len) };
+    let fake_slice = ptr::slice_from_raw_parts_mut(thin as *mut T, len);
 
     fake_slice as *mut ArcInner<HeaderSliceWithLength<H, [T]>>
 }

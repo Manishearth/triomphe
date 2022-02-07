@@ -64,8 +64,8 @@ impl<H, T> Arc<HeaderSlice<H, [T]>> {
             // only to the number of elements in the dynamically-sized portion of
             // the type, so the value will be the same whether it points to a [T]
             // or something else with a [T] as its last member.
-            let fake_slice: &mut [T] = slice::from_raw_parts_mut(buffer as *mut T, num_items);
-            ptr = fake_slice as *mut [T] as *mut ArcInner<HeaderSlice<H, [T]>>;
+            let fake_slice = ptr::slice_from_raw_parts_mut(buffer as *mut T, num_items);
+            ptr = fake_slice as *mut ArcInner<HeaderSlice<H, [T]>>;
 
             let count = atomic::AtomicUsize::new(1);
 
@@ -157,8 +157,8 @@ impl<H, T> Arc<HeaderSlice<H, [T]>> {
             // only to the number of elements in the dynamically-sized portion of
             // the type, so the value will be the same whether it points to a [T]
             // or something else with a [T] as its last member.
-            let fake_slice: &mut [T] = slice::from_raw_parts_mut(buffer as *mut T, num_items);
-            ptr = fake_slice as *mut [T] as *mut ArcInner<HeaderSlice<H, [T]>>;
+            let fake_slice = ptr::slice_from_raw_parts_mut(buffer as *mut T, num_items);
+            ptr = fake_slice as *mut ArcInner<HeaderSlice<H, [T]>>;
 
             let count = atomic::AtomicUsize::new(1);
 
