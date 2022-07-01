@@ -11,7 +11,6 @@ use core::mem;
 use core::mem::{ManuallyDrop, MaybeUninit};
 use core::ops::Deref;
 use core::ptr;
-use core::slice;
 use core::sync::atomic;
 use core::sync::atomic::Ordering::{Acquire, Relaxed, Release};
 use core::{isize, usize};
@@ -97,7 +96,11 @@ impl<T> Arc<T> {
     /// Same as into_raw except `self` isn't consumed.
     #[inline]
     pub fn as_ptr(&self) -> *const T {
-        unsafe { &((*self.ptr()).data) as *const _ }
+        // SAFETY: This cannot go through a reference to `data`, because this method
+        // is used to implement `into_raw`. To reconstruct the full `Arc` from this
+        // pointer, it needs to maintain its full provenance, and not be reduced to
+        // just the contained `T`.
+        unsafe { ptr::addr_of_mut!((*self.ptr()).data) }
     }
 
     /// Reconstruct the Arc<T> from a raw pointer obtained from into_raw()
@@ -275,7 +278,7 @@ impl<T> Arc<[MaybeUninit<T>]> {
         // Allocate and initialize ArcInner
         let ptr = unsafe {
             let ptr = alloc(layout);
-            let slice = slice::from_raw_parts(ptr, len);
+            let slice = ptr::slice_from_raw_parts_mut(ptr, len);
 
             let ptr = mem::transmute::<_, *mut ArcInnerUninit<[MaybeUninit<T>]>>(slice);
             (*ptr).count.as_mut_ptr().write(atomic::AtomicUsize::new(1));
@@ -679,7 +682,6 @@ mod tests {
 
     #[test]
     #[cfg(feature = "std")]
-    #[cfg_attr(miri, ignore)]
     fn maybeuninit_array() {
         let mut arc: Arc<[MaybeUninit<_>]> = Arc::new_uninit_slice(5);
         assert!(arc.is_unique());
@@ -708,5 +710,14 @@ mod tests {
         drop(arcs);
         assert!(arc.is_unique());
         assert_eq!(*arc, [0, 1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn roundtrip() {
+        let arc: Arc<usize> = Arc::new(0usize);
+        let ptr = Arc::into_raw(arc);
+        unsafe {
+            let _arc = Arc::from_raw(ptr);
+        }
     }
 }
