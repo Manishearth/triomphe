@@ -3,7 +3,6 @@ use core::iter::{ExactSizeIterator, Iterator};
 use core::marker::PhantomData;
 use core::mem;
 use core::ptr;
-use core::slice;
 use core::sync::atomic;
 use core::usize;
 

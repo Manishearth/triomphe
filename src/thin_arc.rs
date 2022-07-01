@@ -7,7 +7,6 @@ use core::mem;
 use core::mem::ManuallyDrop;
 use core::ops::Deref;
 use core::ptr;
-use core::slice;
 use core::usize;
 
 use super::{Arc, ArcInner, HeaderSliceWithLength, HeaderWithLength};
