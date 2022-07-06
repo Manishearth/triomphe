@@ -242,12 +242,22 @@ impl<T> Arc<MaybeUninit<T>> {
     }
 
     /// Calls `MaybeUninit::write` on the value contained.
+    ///
+    /// ## Panics
+    ///
+    /// If the `Arc` is not unique.
+    #[deprecated(
+        since = "0.1.7",
+        note = "this function previously was UB and not panics for non-unique `Arc`s. Use `UniqueArc::write` instead."
+    )]
+    #[track_caller]
     pub fn write(&mut self, val: T) -> &mut T {
-        unsafe {
-            let ptr = (*self.ptr()).data.as_mut_ptr();
-            ptr.write(val);
-            &mut *ptr
-        }
+        UniqueArc::write(
+            Self::try_as_unique(self).unwrap_or_else(|this| {
+                panic!("`Arc` must be unique in order for this operation to be safe, there are currently {} copies", Arc::count(this))
+            }),
+            val,
+        )
     }
 
     /// Obtain a mutable pointer to the stored `MaybeUninit<T>`.
@@ -439,6 +449,16 @@ impl<T: ?Sized> Arc<T> {
             // Safety: The current arc is unique and making a `UniqueArc`
             //         from it is sound
             unsafe { Ok(UniqueArc::from_arc(this)) }
+        } else {
+            Err(this)
+        }
+    }
+
+    pub(crate) fn try_as_unique(this: &mut Self) -> Result<&mut UniqueArc<T>, &mut Self> {
+        if this.is_unique() {
+            // Safety: The current arc is unique and making a `UniqueArc`
+            //         from it is sound
+            unsafe { Ok(UniqueArc::from_arc_ref(this)) }
         } else {
             Err(this)
         }
@@ -672,12 +692,29 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn maybeuninit() {
         let mut arc: Arc<MaybeUninit<_>> = Arc::new_uninit();
         arc.write(999);
 
         let arc = unsafe { arc.assume_init() };
         assert_eq!(*arc, 999);
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    #[should_panic = "`Arc` must be unique in order for this operation to be safe"]
+    fn maybeuninit_ub_to_proceed() {
+        let mut uninit = Arc::new_uninit();
+        let clone = uninit.clone();
+
+        let x: &MaybeUninit<String> = &*clone;
+
+        // This write invalidates `x` reference
+        uninit.write(String::from("nonononono"));
+
+        // Read invalidated reference to trigger UB
+        let _ = &*x;
     }
 
     #[test]

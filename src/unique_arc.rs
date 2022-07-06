@@ -94,9 +94,43 @@ impl<T: ?Sized> UniqueArc<T> {
         debug_assert_eq!(Arc::count(&arc), 1);
         Self(arc)
     }
+
+    /// Creates a new `&mut `[`UniqueArc`] from the given `&mut `[`Arc`].
+    ///
+    /// An unchecked alternative to `Arc::try_as_unique()`
+    ///
+    /// # Safety
+    ///
+    /// The given `Arc` must have a reference count of exactly one
+    pub(crate) unsafe fn from_arc_ref(arc: &mut Arc<T>) -> &mut Self {
+        debug_assert_eq!(Arc::count(&arc), 1);
+
+        // Safety: caller guarantees that `arc` is unique,
+        //         `UniqueArc` is `repr(transparent)`
+        &mut *(arc as *mut Arc<T> as *mut UniqueArc<T>)
+    }
 }
 
 impl<T> UniqueArc<MaybeUninit<T>> {
+    /// Calls `MaybeUninit::write` on the contained value.
+    pub fn write(&mut self, val: T) -> &mut T {
+        unsafe {
+            // Casting *mut MaybeUninit<T> -> *mut T is always fine
+            let ptr = self.as_mut_ptr() as *mut T;
+
+            // Safety: We have exclusive access to the inner data
+            ptr.write(val);
+
+            // Safety: the pointer was just written to
+            &mut *ptr
+        }
+    }
+
+    /// Obtain a mutable pointer to the stored `MaybeUninit<T>`.
+    pub fn as_mut_ptr(&mut self) -> *mut MaybeUninit<T> {
+        unsafe { &mut (*self.0.ptr()).data }
+    }
+
     /// Convert to an initialized Arc.
     ///
     /// # Safety
@@ -163,7 +197,7 @@ unsafe impl<T, U: ?Sized> unsize::CoerciblePtr<U> for UniqueArc<T> {
 #[cfg(test)]
 mod tests {
     use crate::{Arc, UniqueArc};
-    use core::convert::TryFrom;
+    use core::{convert::TryFrom, mem::MaybeUninit};
 
     #[test]
     fn unique_into_inner() {
@@ -181,5 +215,15 @@ mod tests {
             UniqueArc::into_inner(UniqueArc::try_from(y).unwrap()),
             10_000,
         );
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn maybeuninit_smoke() {
+        let mut arc: UniqueArc<MaybeUninit<_>> = UniqueArc::new_uninit();
+        arc.write(999);
+
+        let arc = unsafe { UniqueArc::assume_init(arc) };
+        assert_eq!(*arc, 999);
     }
 }
