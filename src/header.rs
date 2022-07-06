@@ -100,12 +100,6 @@ impl<H, T> Arc<HeaderSlice<H, [T]>> {
             );
         }
 
-        // Return the fat Arc.
-        assert_eq!(
-            mem::size_of::<Self>(),
-            mem::size_of::<usize>() * 2,
-            "The Arc will be fat"
-        );
         unsafe {
             Arc {
                 p: ptr::NonNull::new_unchecked(ptr),
@@ -168,12 +162,6 @@ impl<H, T> Arc<HeaderSlice<H, [T]>> {
             ptr::copy_nonoverlapping(items.as_ptr(), current, num_items);
         }
 
-        // Return the fat Arc.
-        assert_eq!(
-            mem::size_of::<Self>(),
-            mem::size_of::<usize>() * 2,
-            "The Arc will be fat"
-        );
         unsafe {
             Arc {
                 p: ptr::NonNull::new_unchecked(ptr),
