@@ -659,6 +659,7 @@ mod tests {
     use core::mem::MaybeUninit;
     #[cfg(feature = "unsize")]
     use unsize::{CoerceUnsize, Coercion};
+    use alloc::string::String;
 
     #[test]
     fn try_unwrap() {
