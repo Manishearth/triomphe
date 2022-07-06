@@ -656,10 +656,10 @@ unsafe impl<T, U: ?Sized> unsize::CoerciblePtr<U> for Arc<T> {
 #[cfg(test)]
 mod tests {
     use crate::arc::Arc;
+    use alloc::string::String;
     use core::mem::MaybeUninit;
     #[cfg(feature = "unsize")]
     use unsize::{CoerceUnsize, Coercion};
-    use alloc::string::String;
 
     #[test]
     fn try_unwrap() {
