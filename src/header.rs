@@ -100,12 +100,6 @@ impl<H, T> Arc<HeaderSlice<H, [T]>> {
             );
         }
 
-        // Return the fat Arc.
-        assert_eq!(
-            mem::size_of::<Self>(),
-            mem::size_of::<usize>() * 2,
-            "The Arc will be fat"
-        );
         unsafe {
             Arc {
                 p: ptr::NonNull::new_unchecked(ptr),
@@ -168,12 +162,6 @@ impl<H, T> Arc<HeaderSlice<H, [T]>> {
             ptr::copy_nonoverlapping(items.as_ptr(), current, num_items);
         }
 
-        // Return the fat Arc.
-        assert_eq!(
-            mem::size_of::<Self>(),
-            mem::size_of::<usize>() * 2,
-            "The Arc will be fat"
-        );
         unsafe {
             Arc {
                 p: ptr::NonNull::new_unchecked(ptr),
@@ -204,3 +192,56 @@ impl<H> HeaderWithLength<H> {
 }
 
 pub(crate) type HeaderSliceWithLength<H, T> = HeaderSlice<HeaderWithLength<H>, T>;
+
+#[cfg(test)]
+mod tests {
+    use core::iter;
+
+    use crate::Arc;
+
+    #[test]
+    fn from_header_and_iter_smoke() {
+        let arc = Arc::from_header_and_iter(
+            (42u32, 17u8),
+            IntoIterator::into_iter([1u16, 2, 3, 4, 5, 6, 7]),
+        );
+
+        assert_eq!(arc.header, (42, 17));
+        assert_eq!(arc.slice, [1, 2, 3, 4, 5, 6, 7]);
+    }
+
+    #[test]
+    fn from_header_and_slice_smoke() {
+        let arc = Arc::from_header_and_slice((42u32, 17u8), &[1u16, 2, 3, 4, 5, 6, 7]);
+
+        assert_eq!(arc.header, (42, 17));
+        assert_eq!(arc.slice, [1u16, 2, 3, 4, 5, 6, 7]);
+    }
+
+    #[test]
+    fn from_header_and_iter_empty() {
+        let arc = Arc::from_header_and_iter((42u32, 17u8), iter::empty::<u16>());
+
+        assert_eq!(arc.header, (42, 17));
+        assert_eq!(arc.slice, []);
+    }
+
+    #[test]
+    fn from_header_and_slice_empty() {
+        let arc = Arc::from_header_and_slice((42u32, 17u8), &[1u16; 0]);
+
+        assert_eq!(arc.header, (42, 17));
+        assert_eq!(arc.slice, []);
+    }
+
+    #[test]
+    fn issue_13_empty() {
+        crate::Arc::from_header_and_iter((), iter::empty::<usize>());
+    }
+
+    #[test]
+    fn issue_13_consumption() {
+        let s: &[u8] = &[0u8; 255];
+        crate::Arc::from_header_and_iter((), s.iter().copied());
+    }
+}
