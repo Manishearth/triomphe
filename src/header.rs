@@ -236,7 +236,7 @@ mod tests {
 
     #[test]
     fn issue_13_empty() {
-        crate::Arc::from_header_and_iter((), std::iter::empty::<usize>());
+        crate::Arc::from_header_and_iter((), iter::empty::<usize>());
     }
 
     #[test]
