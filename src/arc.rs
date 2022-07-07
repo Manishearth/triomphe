@@ -1,4 +1,4 @@
-use alloc::boxed::Box;
+use alloc::{alloc::alloc, boxed::Box};
 use core::alloc::Layout;
 use core::borrow;
 use core::cmp::Ordering;
@@ -14,9 +14,6 @@ use core::ptr;
 use core::sync::atomic;
 use core::sync::atomic::Ordering::{Acquire, Relaxed, Release};
 use core::{isize, usize};
-
-#[cfg(feature = "std")]
-use std::alloc::alloc;
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -276,7 +273,6 @@ impl<T> Arc<MaybeUninit<T>> {
     }
 }
 
-#[cfg(feature = "std")]
 impl<T> Arc<[MaybeUninit<T>]> {
     /// Create an Arc contains an array `[MaybeUninit<T>]` of `len`.
     pub fn new_uninit_slice(len: usize) -> Self {
