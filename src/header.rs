@@ -258,4 +258,21 @@ mod tests {
         let s: &[u8] = &[0u8; 255];
         crate::Arc::from_header_and_iter((), s.iter().copied());
     }
+
+    #[test]
+    fn from_header_and_str_smoke() {
+        let a = Arc::from_header_and_str(
+            42,
+            "The answer to the ultimate question of life, the universe, and everything",
+        );
+        assert_eq!(a.header, 42);
+        assert_eq!(
+            &a.slice,
+            "The answer to the ultimate question of life, the universe, and everything"
+        );
+
+        let empty = Arc::from_header_and_str((), "");
+        assert_eq!(empty.header, ());
+        assert_eq!(&empty.slice, "");
+    }
 }
