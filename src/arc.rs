@@ -693,6 +693,22 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
+    #[should_panic = "`Arc` must be unique in order for this operation to be safe"]
+    fn maybeuninit_slice_ub_to_proceed() {
+        let mut uninit = Arc::new_uninit_slice(13);
+        let clone = uninit.clone();
+
+        let x: &[MaybeUninit<String>] = &*clone;
+
+        // This write invalidates `x` reference
+        uninit.as_mut_slice()[0].write(String::from("nonononono"));
+
+        // Read invalidated reference to trigger UB
+        let _ = &*x;
+    }
+
+    #[test]
     fn maybeuninit_array() {
         let mut arc: Arc<[MaybeUninit<_>]> = Arc::new_uninit_slice(5);
         assert!(arc.is_unique());
