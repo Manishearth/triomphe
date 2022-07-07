@@ -1,5 +1,4 @@
-use alloc::{alloc::alloc, boxed::Box};
-use core::alloc::Layout;
+use alloc::boxed::Box;
 use core::borrow;
 use core::cmp::Ordering;
 use core::convert::From;
@@ -7,7 +6,6 @@ use core::ffi::c_void;
 use core::fmt;
 use core::hash::{Hash, Hasher};
 use core::marker::PhantomData;
-use core::mem;
 use core::mem::{ManuallyDrop, MaybeUninit};
 use core::ops::Deref;
 use core::ptr;
@@ -33,12 +31,6 @@ const MAX_REFCOUNT: usize = (isize::MAX) as usize;
 pub(crate) struct ArcInner<T: ?Sized> {
     pub(crate) count: atomic::AtomicUsize,
     pub(crate) data: T,
-}
-
-#[repr(C)]
-struct ArcInnerUninit<T: ?Sized> {
-    count: MaybeUninit<atomic::AtomicUsize>,
-    data: T,
 }
 
 unsafe impl<T: ?Sized + Sync + Send> Send for ArcInner<T> {}
@@ -247,7 +239,7 @@ impl<T> Arc<MaybeUninit<T>> {
     /// If the `Arc` is not unique.
     #[deprecated(
         since = "0.1.7",
-        note = "this function previously was UB and not panics for non-unique `Arc`s. Use `UniqueArc::write` instead."
+        note = "this function previously was UB and now panics for non-unique `Arc`s. Use `UniqueArc::write` instead."
     )]
     #[track_caller]
     pub fn write(&mut self, val: T) -> &mut T {
@@ -276,35 +268,19 @@ impl<T> Arc<MaybeUninit<T>> {
 impl<T> Arc<[MaybeUninit<T>]> {
     /// Create an Arc contains an array `[MaybeUninit<T>]` of `len`.
     pub fn new_uninit_slice(len: usize) -> Self {
-        // layout should work as expected since ArcInner uses C representation.
-        let layout = Layout::new::<atomic::AtomicUsize>();
-        let array_layout = Layout::array::<MaybeUninit<T>>(len).unwrap();
-
-        let (layout, _) = layout.extend(array_layout).unwrap();
-        let layout = layout.pad_to_align();
-
-        // Allocate and initialize ArcInner
-        let ptr = unsafe {
-            let ptr = alloc(layout);
-            let slice = ptr::slice_from_raw_parts_mut(ptr, len);
-
-            let ptr = mem::transmute::<_, *mut ArcInnerUninit<[MaybeUninit<T>]>>(slice);
-            (*ptr).count.as_mut_ptr().write(atomic::AtomicUsize::new(1));
-
-            let ptr = mem::transmute::<_, *mut ArcInner<[MaybeUninit<T>]>>(ptr);
-            debug_assert_eq!(mem::size_of_val(&*ptr), layout.size());
-            ptr
-        };
-
-        Arc {
-            p: ptr::NonNull::new(ptr).unwrap(),
-            phantom: PhantomData,
-        }
+        UniqueArc::new_uninit_slice(len).shareable()
     }
 
     /// Obtain a mutable slice to the stored `[MaybeUninit<T>]`.
+    #[deprecated(
+        since = "0.1.8",
+        note = "this function previously was UB and now panics for non-unique `Arc`s. Use `UniqueArc` or `get_mut` instead."
+    )]
+    #[track_caller]
     pub fn as_mut_slice(&mut self) -> &mut [MaybeUninit<T>] {
-        unsafe { &mut (*self.ptr()).data }
+        Self::try_as_unique(self).unwrap_or_else(|this| {
+            panic!("`Arc` must be unique in order for this operation to be safe, there are currently {} copies", Arc::count(this))
+        })
     }
 
     /// # Safety
@@ -717,10 +693,10 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "std")]
     fn maybeuninit_array() {
         let mut arc: Arc<[MaybeUninit<_>]> = Arc::new_uninit_slice(5);
         assert!(arc.is_unique());
+        #[allow(deprecated)]
         for (uninit, index) in arc.as_mut_slice().iter_mut().zip(0..5) {
             let ptr = uninit.as_mut_ptr();
             unsafe { core::ptr::write(ptr, index) };

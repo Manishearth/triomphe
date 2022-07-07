@@ -1,10 +1,13 @@
-use alloc::{alloc::Layout, boxed::Box};
+use alloc::{
+    alloc::{alloc, Layout},
+    boxed::Box,
+};
 use core::convert::TryFrom;
 use core::marker::PhantomData;
-use core::mem::{ManuallyDrop, MaybeUninit};
+use core::mem::{self, ManuallyDrop, MaybeUninit};
 use core::ops::{Deref, DerefMut};
-use core::ptr::{self, NonNull};
-use core::sync::atomic::AtomicUsize;
+use core::ptr::{self, addr_of_mut, NonNull};
+use core::sync::atomic::{self, AtomicUsize};
 
 use super::{Arc, ArcInner};
 
@@ -144,6 +147,46 @@ impl<T> UniqueArc<MaybeUninit<T>> {
             p: ManuallyDrop::new(this).0.p.cast(),
             phantom: PhantomData,
         })
+    }
+}
+
+impl<T> UniqueArc<[MaybeUninit<T>]> {
+    /// Create an Arc contains an array `[MaybeUninit<T>]` of `len`.
+    pub fn new_uninit_slice(len: usize) -> Self {
+        // layout should work as expected since ArcInner uses C representation.
+        let layout = Layout::new::<atomic::AtomicUsize>();
+        let array_layout = Layout::array::<MaybeUninit<T>>(len).unwrap();
+
+        let (layout, _) = layout.extend(array_layout).unwrap();
+        let layout = layout.pad_to_align();
+
+        // Allocate and initialize ArcInner
+        let ptr = unsafe {
+            let ptr = alloc(layout);
+
+            let fake_slice = ptr::slice_from_raw_parts_mut(ptr, len);
+            let ptr = fake_slice as *mut ArcInner<[MaybeUninit<T>]>;
+
+            addr_of_mut!((*ptr).count).write(atomic::AtomicUsize::new(1));
+
+            debug_assert_eq!(mem::size_of_val(&*ptr), layout.size());
+            ptr
+        };
+
+        // Safety: `ArcInner` is properly allocated and initialized.
+        //         The `Arc` is just created and so -- unique.
+        unsafe {
+            let arc = Arc::from_raw_inner(ptr);
+            UniqueArc(arc)
+        }
+    }
+
+    /// # Safety
+    ///
+    /// Must initialize all fields before calling this function.
+    #[inline]
+    pub unsafe fn assume_init_slice(Self(this): Self) -> UniqueArc<[T]> {
+        UniqueArc(this.assume_init())
     }
 }
 
