@@ -198,11 +198,17 @@ impl<T: ?Sized> Arc<T> {
         self.p.as_ptr() as *const ArcInner<T> as *const c_void
     }
 
+    #[inline]
+    pub(super) fn into_raw_inner(this: Self) -> *mut ArcInner<T> {
+        let this = ManuallyDrop::new(this);
+        this.ptr()
+    }
+
     /// Construct an `Arc` from an allocated `ArcInner`.
     /// # Safety
     /// The `ptr` must point to a valid instance, allocated by an `Arc`. The reference could will
     /// not be modified.
-    unsafe fn from_raw_inner(ptr: *mut ArcInner<T>) -> Self {
+    pub(super) unsafe fn from_raw_inner(ptr: *mut ArcInner<T>) -> Self {
         Arc {
             p: ptr::NonNull::new_unchecked(ptr),
             phantom: PhantomData,
