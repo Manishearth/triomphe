@@ -103,16 +103,11 @@ impl<T> Arc<T> {
         F: FnOnce(&OffsetArc<T>) -> U,
     {
         // Synthesize transient Arc, which never touches the refcount of the ArcInner.
+        // Store transient in `ManuallyDrop`, to leave the refcount untouched.
         let transient = unsafe { ManuallyDrop::new(Arc::into_raw_offset(ptr::read(self))) };
 
         // Expose the transient Arc to the callback, which may clone it if it wants.
-        let result = f(&transient);
-
-        // Forget the transient Arc to leave the refcount untouched.
-        mem::forget(transient);
-
-        // Forward the result.
-        result
+        f(&transient)
     }
 
     /// Converts an `Arc` into a `OffsetArc`. This consumes the `Arc`, so the refcount
@@ -131,8 +126,8 @@ impl<T> Arc<T> {
     /// is not modified.
     #[inline]
     pub fn from_raw_offset(a: OffsetArc<T>) -> Self {
+        let a = ManuallyDrop::new(a);
         let ptr = a.ptr.as_ptr();
-        mem::forget(a);
         unsafe { Arc::from_raw(ptr) }
     }
 
@@ -166,9 +161,8 @@ impl<T: ?Sized> Arc<T> {
     /// It is recommended to use OffsetArc for this.
     #[inline]
     pub fn into_raw(this: Self) -> *const T {
-        let ptr = this.as_ptr();
-        mem::forget(this);
-        ptr
+        let this = ManuallyDrop::new(this);
+        this.as_ptr()
     }
 
     /// Returns the raw pointer.
