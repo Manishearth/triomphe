@@ -3,7 +3,6 @@ use core::fmt;
 use core::hash::{Hash, Hasher};
 use core::iter::{ExactSizeIterator, Iterator};
 use core::marker::PhantomData;
-use core::mem;
 use core::mem::ManuallyDrop;
 use core::ops::Deref;
 use core::ptr;
@@ -124,9 +123,8 @@ impl<H, T> ThinArc<H, T> {
     /// Consume ThinArc and returned the wrapped pointer.
     #[inline]
     pub fn into_raw(self) -> *const c_void {
-        let ptr = self.ptr.cast();
-        mem::forget(self);
-        ptr.as_ptr()
+        let this = ManuallyDrop::new(self);
+        this.ptr.cast().as_ptr()
     }
 
     /// Provides a raw pointer to the data.
@@ -169,13 +167,13 @@ impl<H, T> Arc<HeaderSliceWithLength<H, [T]>> {
     /// is not modified.
     #[inline]
     pub fn into_thin(a: Self) -> ThinArc<H, T> {
+        let a = ManuallyDrop::new(a);
         assert_eq!(
             a.header.length,
             a.slice.len(),
             "Length needs to be correct for ThinArc to work"
         );
         let fat_ptr: *mut ArcInner<HeaderSliceWithLength<H, [T]>> = a.ptr();
-        mem::forget(a);
         let thin_ptr = fat_ptr as *mut [usize] as *mut usize;
         ThinArc {
             ptr: unsafe {
@@ -191,8 +189,8 @@ impl<H, T> Arc<HeaderSliceWithLength<H, [T]>> {
     /// is not modified.
     #[inline]
     pub fn from_thin(a: ThinArc<H, T>) -> Self {
+        let a = ManuallyDrop::new(a);
         let ptr = thin_to_thick(a.ptr.as_ptr());
-        mem::forget(a);
         unsafe {
             Arc {
                 p: ptr::NonNull::new_unchecked(ptr),
