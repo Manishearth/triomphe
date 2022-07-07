@@ -79,30 +79,6 @@ impl<T> Arc<T> {
         }
     }
 
-    /// Convert the Arc<T> to a raw pointer, suitable for use across FFI
-    ///
-    /// Note: This returns a pointer to the data T, which is offset in the allocation.
-    ///
-    /// It is recommended to use OffsetArc for this.
-    #[inline]
-    pub fn into_raw(this: Self) -> *const T {
-        let ptr = this.as_ptr();
-        mem::forget(this);
-        ptr
-    }
-
-    /// Returns the raw pointer.
-    ///
-    /// Same as into_raw except `self` isn't consumed.
-    #[inline]
-    pub fn as_ptr(&self) -> *const T {
-        // SAFETY: This cannot go through a reference to `data`, because this method
-        // is used to implement `into_raw`. To reconstruct the full `Arc` from this
-        // pointer, it needs to maintain its full provenance, and not be reduced to
-        // just the contained `T`.
-        unsafe { ptr::addr_of_mut!((*self.ptr()).data) }
-    }
-
     /// Reconstruct the Arc<T> from a raw pointer obtained from into_raw()
     ///
     /// Note: This raw pointer will be offset in the allocation and must be preceded
@@ -111,19 +87,12 @@ impl<T> Arc<T> {
     /// It is recommended to use OffsetArc for this
     #[inline]
     pub unsafe fn from_raw(ptr: *const T) -> Self {
+        // FIXME: when `byte_sub` is stabilized, this can accept T: ?Sized.
+
         // To find the corresponding pointer to the `ArcInner` we need
         // to subtract the offset of the `data` field from the pointer.
         let ptr = (ptr as *const u8).sub(offset_of!(ArcInner<T>, data));
         Arc::from_raw_inner(ptr as *mut ArcInner<T>)
-    }
-
-    /// Produce a pointer to the data that can be converted back
-    /// to an Arc. This is basically an `&Arc<T>`, without the extra indirection.
-    /// It has the benefits of an `&T` but also knows about the underlying refcount
-    /// and can be converted into more `Arc<T>`s if necessary.
-    #[inline]
-    pub fn borrow_arc(&self) -> ArcBorrow<'_, T> {
-        ArcBorrow(&**self)
     }
 
     /// Temporarily converts |self| into a bonafide OffsetArc and exposes it to the
@@ -144,12 +113,6 @@ impl<T> Arc<T> {
 
         // Forward the result.
         result
-    }
-
-    /// Returns the address on the heap of the Arc itself -- not the T within it -- for memory
-    /// reporting.
-    pub fn heap_ptr(&self) -> *const c_void {
-        self.p.as_ptr() as *const ArcInner<T> as *const c_void
     }
 
     /// Converts an `Arc` into a `OffsetArc`. This consumes the `Arc`, so the refcount
@@ -196,11 +159,56 @@ impl<T> Arc<T> {
 }
 
 impl<T: ?Sized> Arc<T> {
+    /// Convert the Arc<T> to a raw pointer, suitable for use across FFI
+    ///
+    /// Note: This returns a pointer to the data T, which is offset in the allocation.
+    ///
+    /// It is recommended to use OffsetArc for this.
+    #[inline]
+    pub fn into_raw(this: Self) -> *const T {
+        let ptr = this.as_ptr();
+        mem::forget(this);
+        ptr
+    }
+
+    /// Returns the raw pointer.
+    ///
+    /// Same as into_raw except `self` isn't consumed.
+    #[inline]
+    pub fn as_ptr(&self) -> *const T {
+        // SAFETY: This cannot go through a reference to `data`, because this method
+        // is used to implement `into_raw`. To reconstruct the full `Arc` from this
+        // pointer, it needs to maintain its full provenance, and not be reduced to
+        // just the contained `T`.
+        unsafe { ptr::addr_of_mut!((*self.ptr()).data) }
+    }
+
+    /// Produce a pointer to the data that can be converted back
+    /// to an Arc. This is basically an `&Arc<T>`, without the extra indirection.
+    /// It has the benefits of an `&T` but also knows about the underlying refcount
+    /// and can be converted into more `Arc<T>`s if necessary.
+    #[inline]
+    pub fn borrow_arc(&self) -> ArcBorrow<'_, T> {
+        ArcBorrow(&**self)
+    }
+
+    /// Returns the address on the heap of the Arc itself -- not the T within it -- for memory
+    /// reporting.
+    pub fn heap_ptr(&self) -> *const c_void {
+        self.p.as_ptr() as *const ArcInner<T> as *const c_void
+    }
+
+    #[inline]
+    pub(super) fn into_raw_inner(this: Self) -> *mut ArcInner<T> {
+        let this = ManuallyDrop::new(this);
+        this.ptr()
+    }
+
     /// Construct an `Arc` from an allocated `ArcInner`.
     /// # Safety
     /// The `ptr` must point to a valid instance, allocated by an `Arc`. The reference could will
     /// not be modified.
-    unsafe fn from_raw_inner(ptr: *mut ArcInner<T>) -> Self {
+    pub(super) unsafe fn from_raw_inner(ptr: *mut ArcInner<T>) -> Self {
         Arc {
             p: ptr::NonNull::new_unchecked(ptr),
             phantom: PhantomData,

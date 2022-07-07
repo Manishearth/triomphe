@@ -171,6 +171,20 @@ impl<H, T> Arc<HeaderSlice<H, [T]>> {
     }
 }
 
+impl<H> Arc<HeaderSlice<H, str>> {
+    /// Creates an Arc for a HeaderSlice using the given header struct and
+    /// a str slice to generate the slice. The resulting Arc will be fat.
+    pub fn from_header_and_str(header: H, string: &str) -> Self {
+        let bytes = Arc::from_header_and_slice(header, string.as_bytes());
+
+        // Safety: `ArcInner` and `HeaderSlice` are `repr(C)`, `str` has the same layout as `[u8]`,
+        //         thus it's ok to "transmute" between `Arc<HeaderSlice<H, [u8]>>` and `Arc<HeaderSlice<H, str>>`.
+        //
+        //         `bytes` are a valid string since we've just got them from a valid `str`.
+        unsafe { Arc::from_raw_inner(Arc::into_raw_inner(bytes) as _) }
+    }
+}
+
 /// Header data with an inline length. Consumers that use HeaderWithLength as the
 /// Header type in HeaderSlice can take advantage of ThinArc.
 #[derive(Debug, Eq, PartialEq, Hash, PartialOrd)]
@@ -243,5 +257,22 @@ mod tests {
     fn issue_13_consumption() {
         let s: &[u8] = &[0u8; 255];
         crate::Arc::from_header_and_iter((), s.iter().copied());
+    }
+
+    #[test]
+    fn from_header_and_str_smoke() {
+        let a = Arc::from_header_and_str(
+            42,
+            "The answer to the ultimate question of life, the universe, and everything",
+        );
+        assert_eq!(a.header, 42);
+        assert_eq!(
+            &a.slice,
+            "The answer to the ultimate question of life, the universe, and everything"
+        );
+
+        let empty = Arc::from_header_and_str((), "");
+        assert_eq!(empty.header, ());
+        assert_eq!(&empty.slice, "");
     }
 }
