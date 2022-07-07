@@ -243,12 +243,7 @@ impl<T> Arc<MaybeUninit<T>> {
     )]
     #[track_caller]
     pub fn write(&mut self, val: T) -> &mut T {
-        UniqueArc::write(
-            Self::try_as_unique(self).unwrap_or_else(|this| {
-                panic!("`Arc` must be unique in order for this operation to be safe, there are currently {} copies", Arc::count(this))
-            }),
-            val,
-        )
+        UniqueArc::write(must_be_unique(self), val)
     }
 
     /// Obtain a mutable pointer to the stored `MaybeUninit<T>`.
@@ -278,9 +273,7 @@ impl<T> Arc<[MaybeUninit<T>]> {
     )]
     #[track_caller]
     pub fn as_mut_slice(&mut self) -> &mut [MaybeUninit<T>] {
-        Self::try_as_unique(self).unwrap_or_else(|this| {
-            panic!("`Arc` must be unique in order for this operation to be safe, there are currently {} copies", Arc::count(this))
-        })
+        must_be_unique(self)
     }
 
     /// # Safety
@@ -624,6 +617,14 @@ unsafe impl<T, U: ?Sized> unsize::CoerciblePtr<U> for Arc<T> {
         // for all currently envisioned unsized types where the tag of T and ArcInner<T> are simply
         // the same.
         Arc::from_raw_inner(p.replace_ptr(new) as *mut ArcInner<U>)
+    }
+}
+
+#[track_caller]
+fn must_be_unique<T: ?Sized>(arc: &mut Arc<T>) -> &mut UniqueArc<T> {
+    match Arc::try_as_unique(arc) {
+        Ok(unique) => unique,
+        Err(this) => panic!("`Arc` must be unique in order for this operation to be safe, there are currently {} copies", Arc::count(this)),
     }
 }
 
