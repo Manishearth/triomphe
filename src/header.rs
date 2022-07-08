@@ -205,13 +205,32 @@ impl<H> HeaderWithLength<H> {
     }
 }
 
+impl<T: ?Sized> From<Arc<HeaderSlice<(), T>>> for Arc<T> {
+    fn from(this: Arc<HeaderSlice<(), T>>) -> Self {
+        debug_assert_eq!(
+            Layout::for_value::<HeaderSlice<(), T>>(&this),
+            Layout::for_value::<T>(&this.slice)
+        );
+
+        // Safety: `HeaderSlice<(), T>` and `T` has the same layout
+        unsafe { Arc::from_raw_inner(Arc::into_raw_inner(this) as _) }
+    }
+}
+
+impl<T: ?Sized> From<Arc<T>> for Arc<HeaderSlice<(), T>> {
+    fn from(this: Arc<T>) -> Self {
+        // Safety: `T` and `HeaderSlice<(), T>` has the same layout
+        unsafe { Arc::from_raw_inner(Arc::into_raw_inner(this) as _) }
+    }
+}
+
 pub(crate) type HeaderSliceWithLength<H, T> = HeaderSlice<HeaderWithLength<H>, T>;
 
 #[cfg(test)]
 mod tests {
     use core::iter;
 
-    use crate::Arc;
+    use crate::{Arc, HeaderSlice};
 
     #[test]
     fn from_header_and_iter_smoke() {
@@ -274,5 +293,18 @@ mod tests {
         let empty = Arc::from_header_and_str((), "");
         assert_eq!(empty.header, ());
         assert_eq!(&empty.slice, "");
+    }
+
+    #[test]
+    fn erase_and_create_from_thin_air_header() {
+        let a: Arc<HeaderSlice<(), [u32]>> = Arc::from_header_and_slice((), &[12, 17, 16]);
+        let b: Arc<[u32]> = a.into();
+
+        assert_eq!(&*b, [12, 17, 16]);
+
+        let c: Arc<HeaderSlice<(), [u32]>> = b.into();
+
+        assert_eq!(&c.slice, [12, 17, 16]);
+        assert_eq!(c.header, ());
     }
 }
