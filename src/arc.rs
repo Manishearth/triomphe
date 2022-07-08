@@ -1,4 +1,6 @@
+use alloc::alloc::handle_alloc_error;
 use alloc::boxed::Box;
+use core::alloc::Layout;
 use core::borrow;
 use core::cmp::Ordering;
 use core::convert::From;
@@ -8,7 +10,7 @@ use core::hash::{Hash, Hasher};
 use core::marker::PhantomData;
 use core::mem::{ManuallyDrop, MaybeUninit};
 use core::ops::Deref;
-use core::ptr;
+use core::ptr::{self, NonNull};
 use core::sync::atomic;
 use core::sync::atomic::Ordering::{Acquire, Relaxed, Release};
 use core::{isize, usize};
@@ -223,6 +225,77 @@ impl<T: ?Sized> Arc<T> {
 
     pub(crate) fn ptr(&self) -> *mut ArcInner<T> {
         self.p.as_ptr()
+    }
+
+    /// Allocates an `ArcInner<T>` with sufficient space for
+    /// a possibly-unsized inner value where the value has the layout provided.
+    ///
+    /// The function `mem_to_arcinner` is called with the data pointer
+    /// and must return back a (potentially fat)-pointer for the `ArcInner<T>`.
+    ///
+    /// ## Safety
+    ///
+    /// `mem_to_arcinner` must return the same pointer, the only things that can change are
+    /// - its type
+    /// - its metadata
+    ///
+    /// `value_layout` must be correct for `T`.
+    #[allow(unused_unsafe)]
+    pub(super) unsafe fn allocate_for_layout(
+        value_layout: Layout,
+        mem_to_arcinner: impl FnOnce(*mut u8) -> *mut ArcInner<T>,
+    ) -> NonNull<ArcInner<T>> {
+        let layout = Layout::new::<ArcInner<()>>()
+            .extend(value_layout)
+            .unwrap()
+            .0
+            .pad_to_align();
+
+        // Safety: we propagate safety requirements to the caller
+        unsafe {
+            Arc::try_allocate_for_layout(value_layout, mem_to_arcinner)
+                .unwrap_or_else(|_| handle_alloc_error(layout))
+        }
+    }
+
+    /// Allocates an `ArcInner<T>` with sufficient space for
+    /// a possibly-unsized inner value where the value has the layout provided,
+    /// returning an error if allocation fails.
+    ///
+    /// The function `mem_to_arcinner` is called with the data pointer
+    /// and must return back a (potentially fat)-pointer for the `ArcInner<T>`.
+    ///
+    /// ## Safety
+    ///
+    /// `mem_to_arcinner` must return the same pointer, the only things that can change are
+    /// - its type
+    /// - its metadata
+    ///
+    /// `value_layout` must be correct for `T`.
+    #[allow(unused_unsafe)]
+    unsafe fn try_allocate_for_layout(
+        value_layout: Layout,
+        mem_to_arcinner: impl FnOnce(*mut u8) -> *mut ArcInner<T>,
+    ) -> Result<NonNull<ArcInner<T>>, ()> {
+        let layout = Layout::new::<ArcInner<()>>()
+            .extend(value_layout)
+            .unwrap()
+            .0
+            .pad_to_align();
+
+        let ptr = NonNull::new(alloc::alloc::alloc(layout)).ok_or(())?;
+
+        // Initialize the ArcInner
+        let inner = mem_to_arcinner(ptr.as_ptr());
+        debug_assert_eq!(unsafe { Layout::for_value(&*inner) }, layout);
+
+        unsafe {
+            ptr::write(&mut (*inner).count, atomic::AtomicUsize::new(1));
+        }
+
+        // Safety: `ptr` is checked to be non-null,
+        //         `inner` is the same as `ptr` (per the safety requirements of this function)
+        unsafe { Ok(NonNull::new_unchecked(inner)) }
     }
 }
 
