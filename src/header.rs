@@ -141,6 +141,58 @@ impl<H, T> Arc<HeaderSlice<H, [T]>> {
             phantom: PhantomData,
         }
     }
+
+    /// Creates an Arc for a HeaderSlice using the given header struct and
+    /// vec to generate the slice. The resulting Arc will be fat.
+    pub fn from_header_and_vec(header: H, mut v: Vec<T>) -> Self {
+        let len = v.len();
+
+        // Safety: the closure only changes the type of the pointer and its metadata
+        let inner = unsafe {
+            let layout = Layout::new::<H>()
+                .extend(Layout::for_value::<[T]>(&v))
+                .unwrap()
+                .0
+                .pad_to_align();
+
+            Self::allocate_for_layout(layout, |mem| {
+                let fake_slice = ptr::slice_from_raw_parts_mut(mem as *mut T, len);
+                fake_slice as *mut ArcInner<HeaderSlice<H, [T]>>
+            })
+        };
+
+        unsafe {
+            // Safety: inner is a valid pointer, so this can't go out of bounds
+            let dst = addr_of_mut!((*inner.as_ptr()).data.header);
+
+            // Safety: `dst` is valid for writes (just allocated)
+            ptr::write(dst, header);
+        }
+
+        unsafe {
+            let src = v.as_mut_ptr();
+
+            // Safety: inner is a valid pointer, so this can't go out of bounds
+            let dst = addr_of_mut!((*inner.as_ptr()).data.slice) as *mut T;
+
+            // Safety:
+            // - `src` is valid for reads for `len` (got from `Vec`)
+            // - `dst` is valid for writes for `len` (just allocated, with layout for appropriate slice)
+            // - `src` and `dst` don't overlap (separate allocations)
+            ptr::copy_nonoverlapping(src, dst, len);
+
+            // Deallocate vec without dropping `T`
+            //
+            // Safety: 0..0 elements are always initialized, 0 <= cap for any cap
+            v.set_len(0);
+        }
+
+        // Safety: ptr is valid & the inner structure is fully initialized
+        Arc {
+            p: inner,
+            phantom: PhantomData,
+        }
+    }
 }
 
 impl<H> Arc<HeaderSlice<H, str>> {
@@ -252,40 +304,8 @@ impl<T> From<Box<T>> for Arc<T> {
 }
 
 impl<T> From<Vec<T>> for Arc<[T]> {
-    fn from(mut v: Vec<T>) -> Self {
-        let len = v.len();
-        let layout = Layout::for_value::<[T]>(&v);
-
-        // Safety: the closure only changes the type of the pointer and its metadata
-        let inner = unsafe {
-            Self::allocate_for_layout(layout, |mem| {
-                let fake_slice = ptr::slice_from_raw_parts_mut(mem as *mut T, len);
-                fake_slice as *mut ArcInner<[T]>
-            })
-        };
-
-        unsafe {
-            let src = v.as_mut_ptr();
-
-            // Safety: inner is a valid pointer, so this can't go out of bounds
-            let dst = addr_of_mut!((*inner.as_ptr()).data) as *mut T;
-
-            // Safety:
-            // - `src` is valid for reads for `len` (got from `Vec`)
-            // - `dst` is valid for writes for `len` (just allocated, with layout for appropriate slice)
-            // - `src` and `dst` don't overlap (separate allocations)
-            ptr::copy_nonoverlapping(src, dst, len);
-
-            // Deallocate vec without dropping `T`
-            //
-            // Safety: 0..0 elements are always initialized, 0 <= cap for any cap
-            v.set_len(0);
-        }
-
-        Arc {
-            p: inner,
-            phantom: PhantomData,
-        }
+    fn from(v: Vec<T>) -> Self {
+        Arc::from_header_and_vec((), v).into()
     }
 }
 
