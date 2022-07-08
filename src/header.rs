@@ -337,6 +337,14 @@ mod tests {
     }
 
     #[test]
+    fn from_header_and_vec_smoke() {
+        let arc = Arc::from_header_and_vec((42u32, 17u8), vec![1u16, 2, 3, 4, 5, 6, 7]);
+
+        assert_eq!(arc.header, (42, 17));
+        assert_eq!(arc.slice, [1u16, 2, 3, 4, 5, 6, 7]);
+    }
+
+    #[test]
     fn from_header_and_iter_empty() {
         let arc = Arc::from_header_and_iter((42u32, 17u8), iter::empty::<u16>());
 
@@ -347,6 +355,14 @@ mod tests {
     #[test]
     fn from_header_and_slice_empty() {
         let arc = Arc::from_header_and_slice((42u32, 17u8), &[1u16; 0]);
+
+        assert_eq!(arc.header, (42, 17));
+        assert_eq!(arc.slice, []);
+    }
+
+    #[test]
+    fn from_header_and_vec_empty() {
+        let arc = Arc::from_header_and_vec((42u32, 17u8), vec![1u16; 0]);
 
         assert_eq!(arc.header, (42, 17));
         assert_eq!(arc.slice, []);
