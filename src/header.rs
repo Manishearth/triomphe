@@ -224,6 +224,24 @@ impl<T: ?Sized> From<Arc<T>> for Arc<HeaderSlice<(), T>> {
     }
 }
 
+impl<T: Copy> From<&[T]> for Arc<[T]> {
+    fn from(slice: &[T]) -> Self {
+        Arc::from_header_and_slice((), slice).into()
+    }
+}
+
+impl From<&str> for Arc<str> {
+    fn from(s: &str) -> Self {
+        Arc::from_header_and_str((), s).into()
+    }
+}
+
+impl From<String> for Arc<str> {
+    fn from(s: String) -> Self {
+        Self::from(&s[..])
+    }
+}
+
 pub(crate) type HeaderSliceWithLength<H, T> = HeaderSlice<HeaderWithLength<H>, T>;
 
 #[cfg(test)]
