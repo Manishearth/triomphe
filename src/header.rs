@@ -1,8 +1,8 @@
 use alloc::alloc::Layout;
 use core::iter::{ExactSizeIterator, Iterator};
 use core::marker::PhantomData;
-use core::mem;
-use core::ptr::{self, NonNull};
+use core::mem::{self, ManuallyDrop};
+use core::ptr::{self, addr_of_mut, NonNull};
 use core::usize;
 
 use super::{Arc, ArcInner};
@@ -214,6 +214,81 @@ impl From<String> for Arc<str> {
     }
 }
 
+// FIXME: once `pointer::with_metadata_of` is stable or
+//        implementable on stable without assuming ptr layout
+//        this will be able to accept `T: ?Sized`.
+impl<T> From<Box<T>> for Arc<T> {
+    fn from(b: Box<T>) -> Self {
+        let layout = Layout::for_value::<T>(&b);
+
+        // Safety: the closure only changes the type of the pointer
+        let inner = unsafe { Self::allocate_for_layout(layout, |mem| mem as *mut ArcInner<T>) };
+
+        unsafe {
+            let src = Box::into_raw(b);
+
+            // Safety: inner is a valid pointer, so this can't go out of bounds
+            let dst = addr_of_mut!((*inner.as_ptr()).data);
+
+            // Safety:
+            // - `src` is valid for reads (got from `Box`)
+            // - `dst` is valid for writes (just allocated)
+            // - `src` and `dst` don't overlap (separate allocations)
+            ptr::copy_nonoverlapping(src, dst, 1);
+
+            // Deallocate box without dropping `T`
+            //
+            // Safety:
+            // - `src` has been got from `Box::into_raw`
+            // - `ManuallyDrop<T>` is guaranteed to have the same layout as `T`
+            Box::<ManuallyDrop<T>>::from_raw(src as _);
+        }
+
+        Arc {
+            p: inner,
+            phantom: PhantomData,
+        }
+    }
+}
+
+impl<T> From<Vec<T>> for Arc<[T]> {
+    fn from(mut v: Vec<T>) -> Self {
+        let len = v.len();
+        let layout = Layout::for_value::<[T]>(&v);
+
+        // Safety: the closure only changes the type of the pointer and its metadata
+        let inner = unsafe {
+            Self::allocate_for_layout(layout, |mem| {
+                let fake_slice = ptr::slice_from_raw_parts_mut(mem as *mut T, len);
+                fake_slice as *mut ArcInner<[T]>
+            })
+        };
+
+        unsafe {
+            let src = v.as_mut_ptr();
+
+            // Safety: inner is a valid pointer, so this can't go out of bounds
+            let dst = addr_of_mut!((*inner.as_ptr()).data) as *mut T;
+
+            // Safety:
+            // - `src` is valid for reads for `len` (got from `Vec`)
+            // - `dst` is valid for writes for `len` (just allocated, with layout for appropriate slice)
+            // - `src` and `dst` don't overlap (separate allocations)
+            ptr::copy_nonoverlapping(src, dst, len);
+
+            // Deallocate vec without dropping `T`
+            //
+            // Safety: 0..0 elements are always initialized, 0 <= cap for any cap
+            v.set_len(0);
+        }
+
+        Arc {
+            p: inner,
+            phantom: PhantomData,
+        }
+    }
+}
+
 pub(crate) type HeaderSliceWithLength<H, T> = HeaderSlice<HeaderWithLength<H>, T>;
 
 #[cfg(test)]
@@ -296,5 +371,27 @@ mod tests {
 
         assert_eq!(&c.slice, [12, 17, 16]);
         assert_eq!(c.header, ());
+    }
+
+    #[test]
+    fn from_box_and_vec() {
+        let b = Box::new(String::from("xxx"));
+        let b = Arc::<String>::from(b);
+        assert_eq!(&*b, "xxx");
+
+        let v = vec![String::from("1"), String::from("2"), String::from("3")];
+        let v = Arc::<[_]>::from(v);
+        assert_eq!(
+            &*v,
+            [String::from("1"), String::from("2"), String::from("3")]
+        );
+
+        let mut v = vec![String::from("1"), String::from("2"), String::from("3")];
+        v.reserve(10);
+        let v = Arc::<[_]>::from(v);
+        assert_eq!(
+            &*v,
+            [String::from("1"), String::from("2"), String::from("3")]
+        );
     }
 }
