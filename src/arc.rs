@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "stable_deref_trait")]
 use stable_deref_trait::{CloneStableDeref, StableDeref};
 
-use crate::{abort, ArcBorrow, OffsetArc, UniqueArc};
+use crate::{abort, ArcBorrow, HeaderSlice, OffsetArc, UniqueArc};
 
 /// A soft limit on the amount of references that may be made to an `Arc`.
 ///
@@ -296,6 +296,34 @@ impl<T: ?Sized> Arc<T> {
         // Safety: `ptr` is checked to be non-null,
         //         `inner` is the same as `ptr` (per the safety requirements of this function)
         unsafe { Ok(NonNull::new_unchecked(inner)) }
+    }
+}
+
+impl<H, T> Arc<HeaderSlice<H, [T]>> {
+    pub(super) fn allocate_for_header_and_slice(
+        len: usize,
+    ) -> NonNull<ArcInner<HeaderSlice<H, [T]>>> {
+        let layout = Layout::new::<H>()
+            .extend(Layout::array::<T>(len).unwrap())
+            .unwrap()
+            .0
+            .pad_to_align();
+
+        unsafe {
+            // Safety:
+            // - the provided closure does not change the pointer (except for meta & type)
+            // - the provided layout is valid for `HeaderSlice<H, [T]>`
+            Arc::allocate_for_layout(layout, |mem| {
+                // Synthesize the fat pointer. We do this by claiming we have a direct
+                // pointer to a [T], and then changing the type of the borrow. The key
+                // point here is that the length portion of the fat pointer applies
+                // only to the number of elements in the dynamically-sized portion of
+                // the type, so the value will be the same whether it points to a [T]
+                // or something else with a [T] as its last member.
+                let fake_slice = ptr::slice_from_raw_parts_mut(mem as *mut T, len);
+                fake_slice as *mut ArcInner<HeaderSlice<H, [T]>>
+            })
+        }
     }
 }
 

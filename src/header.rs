@@ -2,7 +2,7 @@ use alloc::alloc::Layout;
 use core::iter::{ExactSizeIterator, Iterator};
 use core::marker::PhantomData;
 use core::mem::{self, ManuallyDrop};
-use core::ptr::{self, addr_of_mut, NonNull};
+use core::ptr::{self, addr_of_mut};
 use core::usize;
 
 use super::{Arc, ArcInner};
@@ -30,45 +30,16 @@ impl<H, T> Arc<HeaderSlice<H, [T]>> {
 
         let num_items = items.len();
 
-        // Offset of the start of the slice in the allocation.
-        let inner_to_data_offset = offset_of!(ArcInner<HeaderSlice<H, [T; 0]>>, data);
-        let data_to_slice_offset = offset_of!(HeaderSlice<H, [T; 0]>, slice);
-        let slice_offset = inner_to_data_offset + data_to_slice_offset;
-
-        let ptr: NonNull<ArcInner<HeaderSlice<H, [T]>>> = unsafe {
-            let layout = Layout::new::<H>()
-                .extend(Layout::array::<T>(num_items).unwrap())
-                .unwrap()
-                .0
-                .pad_to_align();
-
-            // Safety:
-            // - the provided closure does not change the pointer (except for meta & type)
-            // - the provided layout is valid for `HeaderSlice<H, [T]>`
-            Arc::allocate_for_layout(layout, |mem| {
-                // Synthesize the fat pointer. We do this by claiming we have a direct
-                // pointer to a [T], and then changing the type of the borrow. The key
-                // point here is that the length portion of the fat pointer applies
-                // only to the number of elements in the dynamically-sized portion of
-                // the type, so the value will be the same whether it points to a [T]
-                // or something else with a [T] as its last member.
-                let fake_slice = ptr::slice_from_raw_parts_mut(mem as *mut T, num_items);
-                fake_slice as *mut ArcInner<HeaderSlice<H, [T]>>
-            })
-        };
+        let inner = Arc::allocate_for_header_and_slice(num_items);
 
         unsafe {
             // Write the data.
             //
             // Note that any panics here (i.e. from the iterator) are safe, since
             // we'll just leak the uninitialized memory.
-            ptr::write(&mut ((*ptr.as_ptr()).data.header), header);
+            ptr::write(&mut ((*inner.as_ptr()).data.header), header);
             if num_items != 0 {
-                let mut current = (*ptr.as_ptr()).data.slice.as_mut_ptr();
-                debug_assert_eq!(
-                    current as usize - ptr.as_ptr() as *mut u8 as usize,
-                    slice_offset
-                );
+                let mut current = (*inner.as_ptr()).data.slice.as_mut_ptr();
                 for _ in 0..num_items {
                     ptr::write(
                         current,
@@ -91,7 +62,7 @@ impl<H, T> Arc<HeaderSlice<H, [T]>> {
 
         // Safety: ptr is valid & the inner structure is fully initialized
         Arc {
-            p: ptr,
+            p: inner,
             phantom: PhantomData,
         }
     }
@@ -106,38 +77,18 @@ impl<H, T> Arc<HeaderSlice<H, [T]>> {
 
         let num_items = items.len();
 
-        let ptr: NonNull<ArcInner<HeaderSlice<H, [T]>>> = unsafe {
-            let layout = Layout::new::<H>()
-                .extend(Layout::for_value::<[T]>(items))
-                .unwrap()
-                .0
-                .pad_to_align();
-
-            // Safety:
-            // - the provided closure does not change the pointer (except for meta & type)
-            // - the provided layout is valid for `HeaderSlice<H, [T]>`
-            Arc::allocate_for_layout(layout, |mem| {
-                // Synthesize the fat pointer. We do this by claiming we have a direct
-                // pointer to a [T], and then changing the type of the borrow. The key
-                // point here is that the length portion of the fat pointer applies
-                // only to the number of elements in the dynamically-sized portion of
-                // the type, so the value will be the same whether it points to a [T]
-                // or something else with a [T] as its last member.
-                let fake_slice = ptr::slice_from_raw_parts_mut(mem as *mut T, num_items);
-                fake_slice as *mut ArcInner<HeaderSlice<H, [T]>>
-            })
-        };
+        let inner = Arc::allocate_for_header_and_slice(num_items);
 
         unsafe {
             // Write the data.
-            ptr::write(&mut ((*ptr.as_ptr()).data.header), header);
-            let dst = (*ptr.as_ptr()).data.slice.as_mut_ptr();
+            ptr::write(&mut ((*inner.as_ptr()).data.header), header);
+            let dst = (*inner.as_ptr()).data.slice.as_mut_ptr();
             ptr::copy_nonoverlapping(items.as_ptr(), dst, num_items);
         }
 
         // Safety: ptr is valid & the inner structure is fully initialized
         Arc {
-            p: ptr,
+            p: inner,
             phantom: PhantomData,
         }
     }
@@ -147,19 +98,7 @@ impl<H, T> Arc<HeaderSlice<H, [T]>> {
     pub fn from_header_and_vec(header: H, mut v: Vec<T>) -> Self {
         let len = v.len();
 
-        // Safety: the closure only changes the type of the pointer and its metadata
-        let inner = unsafe {
-            let layout = Layout::new::<H>()
-                .extend(Layout::for_value::<[T]>(&v))
-                .unwrap()
-                .0
-                .pad_to_align();
-
-            Self::allocate_for_layout(layout, |mem| {
-                let fake_slice = ptr::slice_from_raw_parts_mut(mem as *mut T, len);
-                fake_slice as *mut ArcInner<HeaderSlice<H, [T]>>
-            })
-        };
+        let inner = Arc::allocate_for_header_and_slice(len);
 
         unsafe {
             // Safety: inner is a valid pointer, so this can't go out of bounds
