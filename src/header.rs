@@ -1,4 +1,7 @@
 use alloc::alloc::Layout;
+use alloc::boxed::Box;
+use alloc::string::String;
+use alloc::vec::Vec;
 use core::iter::{ExactSizeIterator, Iterator};
 use core::marker::PhantomData;
 use core::mem::{self, ManuallyDrop};
@@ -252,6 +255,9 @@ pub(crate) type HeaderSliceWithLength<H, T> = HeaderSlice<HeaderWithLength<H>, T
 
 #[cfg(test)]
 mod tests {
+    use alloc::boxed::Box;
+    use alloc::string::String;
+    use alloc::vec;
     use core::iter;
 
     use crate::{Arc, HeaderSlice};
