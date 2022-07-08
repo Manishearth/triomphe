@@ -332,7 +332,7 @@ impl<T: ?Sized> Deref for Arc<T> {
     }
 }
 
-impl<T: Clone + ?Sized> Arc<T> {
+impl<T: Clone> Arc<T> {
     /// Makes a mutable reference to the `Arc`, cloning if necessary
     ///
     /// This is functionally equivalent to [`Arc::make_mut`][mm] from the standard library.
@@ -350,7 +350,7 @@ impl<T: Clone + ?Sized> Arc<T> {
     pub fn make_mut(this: &mut Self) -> &mut T {
         if !this.is_unique() {
             // Another pointer exists; clone
-            *this = Arc::new((**this).clone());
+            *this = Arc::new(T::clone(&this));
         }
 
         unsafe {
@@ -361,6 +361,35 @@ impl<T: Clone + ?Sized> Arc<T> {
             // reference to the inner data.
             &mut (*this.ptr()).data
         }
+    }
+
+    /// Makes a `UniqueArc` from an `Arc`, cloning if necessary.
+    ///
+    /// If this `Arc` is uniquely owned, `make_unique()` will provide a `UniqueArc`
+    /// containing `this`. If not, `make_unique()` will create a _new_ `Arc`
+    /// with a copy of the contents, update `this` to point to it, and provide
+    /// a `UniqueArc` to it.
+    ///
+    /// This is useful for implementing copy-on-write schemes where you wish to
+    /// avoid copying things if your `Arc` is not shared.
+    #[inline]
+    pub fn make_unique(this: &mut Self) -> &mut UniqueArc<T> {
+        if !this.is_unique() {
+            // Another pointer exists; clone
+            *this = Arc::new(T::clone(&this));
+        }
+
+        unsafe {
+            // Safety: this is either unique or just created (which is also unique)
+            UniqueArc::from_arc_ref(this)
+        }
+    }
+
+    /// If we have the only reference to `T` then unwrap it. Otherwise, clone `T` and return the clone.
+    ///
+    /// Assuming `arc_t` is of type `Arc<T>`, this function is functionally equivalent to `(*arc_t).clone()`, but will avoid cloning the inner value where possible.
+    pub fn unwrap_or_clone(this: Arc<T>) -> T {
+        Self::try_unwrap(this).unwrap_or_else(|this| T::clone(&this))
     }
 }
 
@@ -376,6 +405,11 @@ impl<T: ?Sized> Arc<T> {
         } else {
             None
         }
+    }
+
+    /// Provides unique access to the arc _if_ the `Arc` is uniquely owned.
+    pub fn get_unique(this: &mut Self) -> Option<&mut UniqueArc<T>> {
+        Self::try_as_unique(this).ok()
     }
 
     /// Whether or not the `Arc` is uniquely owned (is the refcount 1?).
