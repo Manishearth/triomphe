@@ -1,4 +1,6 @@
+use alloc::alloc::handle_alloc_error;
 use alloc::boxed::Box;
+use core::alloc::Layout;
 use core::borrow;
 use core::cmp::Ordering;
 use core::convert::From;
@@ -8,7 +10,7 @@ use core::hash::{Hash, Hasher};
 use core::marker::PhantomData;
 use core::mem::{ManuallyDrop, MaybeUninit};
 use core::ops::Deref;
-use core::ptr;
+use core::ptr::{self, NonNull};
 use core::sync::atomic;
 use core::sync::atomic::Ordering::{Acquire, Relaxed, Release};
 use core::{isize, usize};
@@ -18,7 +20,7 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "stable_deref_trait")]
 use stable_deref_trait::{CloneStableDeref, StableDeref};
 
-use crate::{abort, ArcBorrow, OffsetArc, UniqueArc};
+use crate::{abort, ArcBorrow, HeaderSlice, OffsetArc, UniqueArc};
 
 /// A soft limit on the amount of references that may be made to an `Arc`.
 ///
@@ -223,6 +225,105 @@ impl<T: ?Sized> Arc<T> {
 
     pub(crate) fn ptr(&self) -> *mut ArcInner<T> {
         self.p.as_ptr()
+    }
+
+    /// Allocates an `ArcInner<T>` with sufficient space for
+    /// a possibly-unsized inner value where the value has the layout provided.
+    ///
+    /// The function `mem_to_arcinner` is called with the data pointer
+    /// and must return back a (potentially fat)-pointer for the `ArcInner<T>`.
+    ///
+    /// ## Safety
+    ///
+    /// `mem_to_arcinner` must return the same pointer, the only things that can change are
+    /// - its type
+    /// - its metadata
+    ///
+    /// `value_layout` must be correct for `T`.
+    #[allow(unused_unsafe)]
+    pub(super) unsafe fn allocate_for_layout(
+        value_layout: Layout,
+        mem_to_arcinner: impl FnOnce(*mut u8) -> *mut ArcInner<T>,
+    ) -> NonNull<ArcInner<T>> {
+        let layout = Layout::new::<ArcInner<()>>()
+            .extend(value_layout)
+            .unwrap()
+            .0
+            .pad_to_align();
+
+        // Safety: we propagate safety requirements to the caller
+        unsafe {
+            Arc::try_allocate_for_layout(value_layout, mem_to_arcinner)
+                .unwrap_or_else(|_| handle_alloc_error(layout))
+        }
+    }
+
+    /// Allocates an `ArcInner<T>` with sufficient space for
+    /// a possibly-unsized inner value where the value has the layout provided,
+    /// returning an error if allocation fails.
+    ///
+    /// The function `mem_to_arcinner` is called with the data pointer
+    /// and must return back a (potentially fat)-pointer for the `ArcInner<T>`.
+    ///
+    /// ## Safety
+    ///
+    /// `mem_to_arcinner` must return the same pointer, the only things that can change are
+    /// - its type
+    /// - its metadata
+    ///
+    /// `value_layout` must be correct for `T`.
+    #[allow(unused_unsafe)]
+    unsafe fn try_allocate_for_layout(
+        value_layout: Layout,
+        mem_to_arcinner: impl FnOnce(*mut u8) -> *mut ArcInner<T>,
+    ) -> Result<NonNull<ArcInner<T>>, ()> {
+        let layout = Layout::new::<ArcInner<()>>()
+            .extend(value_layout)
+            .unwrap()
+            .0
+            .pad_to_align();
+
+        let ptr = NonNull::new(alloc::alloc::alloc(layout)).ok_or(())?;
+
+        // Initialize the ArcInner
+        let inner = mem_to_arcinner(ptr.as_ptr());
+        debug_assert_eq!(unsafe { Layout::for_value(&*inner) }, layout);
+
+        unsafe {
+            ptr::write(&mut (*inner).count, atomic::AtomicUsize::new(1));
+        }
+
+        // Safety: `ptr` is checked to be non-null,
+        //         `inner` is the same as `ptr` (per the safety requirements of this function)
+        unsafe { Ok(NonNull::new_unchecked(inner)) }
+    }
+}
+
+impl<H, T> Arc<HeaderSlice<H, [T]>> {
+    pub(super) fn allocate_for_header_and_slice(
+        len: usize,
+    ) -> NonNull<ArcInner<HeaderSlice<H, [T]>>> {
+        let layout = Layout::new::<H>()
+            .extend(Layout::array::<T>(len).unwrap())
+            .unwrap()
+            .0
+            .pad_to_align();
+
+        unsafe {
+            // Safety:
+            // - the provided closure does not change the pointer (except for meta & type)
+            // - the provided layout is valid for `HeaderSlice<H, [T]>`
+            Arc::allocate_for_layout(layout, |mem| {
+                // Synthesize the fat pointer. We do this by claiming we have a direct
+                // pointer to a [T], and then changing the type of the borrow. The key
+                // point here is that the length portion of the fat pointer applies
+                // only to the number of elements in the dynamically-sized portion of
+                // the type, so the value will be the same whether it points to a [T]
+                // or something else with a [T] as its last member.
+                let fake_slice = ptr::slice_from_raw_parts_mut(mem as *mut T, len);
+                fake_slice as *mut ArcInner<HeaderSlice<H, [T]>>
+            })
+        }
     }
 }
 

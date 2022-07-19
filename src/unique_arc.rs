@@ -1,13 +1,12 @@
-use alloc::{
-    alloc::{alloc, Layout},
-    boxed::Box,
-};
+use alloc::{alloc::Layout, boxed::Box};
 use core::convert::TryFrom;
 use core::marker::PhantomData;
-use core::mem::{self, ManuallyDrop, MaybeUninit};
+use core::mem::{ManuallyDrop, MaybeUninit};
 use core::ops::{Deref, DerefMut};
-use core::ptr::{self, addr_of_mut, NonNull};
-use core::sync::atomic::{self, AtomicUsize};
+use core::ptr::{self, NonNull};
+use core::sync::atomic::AtomicUsize;
+
+use crate::HeaderSlice;
 
 use super::{Arc, ArcInner};
 
@@ -153,30 +152,16 @@ impl<T> UniqueArc<MaybeUninit<T>> {
 impl<T> UniqueArc<[MaybeUninit<T>]> {
     /// Create an Arc contains an array `[MaybeUninit<T>]` of `len`.
     pub fn new_uninit_slice(len: usize) -> Self {
-        // layout should work as expected since ArcInner uses C representation.
-        let layout = Layout::new::<atomic::AtomicUsize>();
-        let array_layout = Layout::array::<MaybeUninit<T>>(len).unwrap();
+        let ptr: NonNull<ArcInner<HeaderSlice<(), [MaybeUninit<T>]>>> =
+            Arc::allocate_for_header_and_slice(len);
 
-        let (layout, _) = layout.extend(array_layout).unwrap();
-        let layout = layout.pad_to_align();
-
-        // Allocate and initialize ArcInner
-        let ptr = unsafe {
-            let ptr = alloc(layout);
-
-            let fake_slice = ptr::slice_from_raw_parts_mut(ptr, len);
-            let ptr = fake_slice as *mut ArcInner<[MaybeUninit<T>]>;
-
-            addr_of_mut!((*ptr).count).write(atomic::AtomicUsize::new(1));
-
-            debug_assert_eq!(mem::size_of_val(&*ptr), layout.size());
-            ptr
-        };
-
-        // Safety: `ArcInner` is properly allocated and initialized.
-        //         The `Arc` is just created and so -- unique.
+        // Safety:
+        // - `ArcInner` is properly allocated and initialized.
+        //   - `()` and `[MaybeUninit<T>]` do not require special initialization
+        // - The `Arc` is just created and so -- unique.
         unsafe {
-            let arc = Arc::from_raw_inner(ptr);
+            let arc: Arc<HeaderSlice<(), [MaybeUninit<T>]>> = Arc::from_raw_inner(ptr.as_ptr());
+            let arc: Arc<[MaybeUninit<T>]> = arc.into();
             UniqueArc(arc)
         }
     }

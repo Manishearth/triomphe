@@ -1,9 +1,11 @@
 use alloc::alloc::Layout;
+use alloc::boxed::Box;
+use alloc::string::String;
+use alloc::vec::Vec;
 use core::iter::{ExactSizeIterator, Iterator};
 use core::marker::PhantomData;
-use core::mem;
-use core::ptr;
-use core::sync::atomic;
+use core::mem::{self, ManuallyDrop};
+use core::ptr::{self, addr_of_mut};
 use core::usize;
 
 use super::{Arc, ArcInner};
@@ -31,52 +33,16 @@ impl<H, T> Arc<HeaderSlice<H, [T]>> {
 
         let num_items = items.len();
 
-        // Offset of the start of the slice in the allocation.
-        let inner_to_data_offset = offset_of!(ArcInner<HeaderSlice<H, [T; 0]>>, data);
-        let data_to_slice_offset = offset_of!(HeaderSlice<H, [T; 0]>, slice);
-        let slice_offset = inner_to_data_offset + data_to_slice_offset;
+        let inner = Arc::allocate_for_header_and_slice(num_items);
 
-        // Compute the size of the real payload.
-        let slice_size = mem::size_of::<T>()
-            .checked_mul(num_items)
-            .expect("size overflows");
-        let usable_size = slice_offset
-            .checked_add(slice_size)
-            .expect("size overflows");
-
-        // Round up size to alignment.
-        let align = mem::align_of::<ArcInner<HeaderSlice<H, [T; 0]>>>();
-        let size = usable_size.wrapping_add(align - 1) & !(align - 1);
-        assert!(size >= usable_size, "size overflows");
-        let layout = Layout::from_size_align(size, align).expect("invalid layout");
-
-        let ptr: *mut ArcInner<HeaderSlice<H, [T]>>;
         unsafe {
-            let buffer = alloc::alloc::alloc(layout);
-            if buffer.is_null() {
-                alloc::alloc::handle_alloc_error(layout);
-            }
-
-            // Synthesize the fat pointer. We do this by claiming we have a direct
-            // pointer to a [T], and then changing the type of the borrow. The key
-            // point here is that the length portion of the fat pointer applies
-            // only to the number of elements in the dynamically-sized portion of
-            // the type, so the value will be the same whether it points to a [T]
-            // or something else with a [T] as its last member.
-            let fake_slice = ptr::slice_from_raw_parts_mut(buffer as *mut T, num_items);
-            ptr = fake_slice as *mut ArcInner<HeaderSlice<H, [T]>>;
-
-            let count = atomic::AtomicUsize::new(1);
-
             // Write the data.
             //
             // Note that any panics here (i.e. from the iterator) are safe, since
             // we'll just leak the uninitialized memory.
-            ptr::write(&mut ((*ptr).count), count);
-            ptr::write(&mut ((*ptr).data.header), header);
+            ptr::write(&mut ((*inner.as_ptr()).data.header), header);
             if num_items != 0 {
-                let mut current = (*ptr).data.slice.as_mut_ptr();
-                debug_assert_eq!(current as usize - buffer as usize, slice_offset);
+                let mut current = (*inner.as_ptr()).data.slice.as_mut_ptr();
                 for _ in 0..num_items {
                     ptr::write(
                         current,
@@ -90,9 +56,6 @@ impl<H, T> Arc<HeaderSlice<H, [T]>> {
                     items.next().is_none(),
                     "ExactSizeIterator under-reported length"
                 );
-
-                // We should have consumed the buffer exactly.
-                debug_assert_eq!(current as *mut u8, buffer.add(usable_size));
             }
             assert!(
                 items.next().is_none(),
@@ -100,11 +63,10 @@ impl<H, T> Arc<HeaderSlice<H, [T]>> {
             );
         }
 
-        unsafe {
-            Arc {
-                p: ptr::NonNull::new_unchecked(ptr),
-                phantom: PhantomData,
-            }
+        // Safety: ptr is valid & the inner structure is fully initialized
+        Arc {
+            p: inner,
+            phantom: PhantomData,
         }
     }
 
@@ -118,55 +80,59 @@ impl<H, T> Arc<HeaderSlice<H, [T]>> {
 
         let num_items = items.len();
 
-        // Offset of the start of the slice in the allocation.
-        let inner_to_data_offset = offset_of!(ArcInner<HeaderSlice<H, [T; 0]>>, data);
-        let data_to_slice_offset = offset_of!(HeaderSlice<H, [T; 0]>, slice);
-        let slice_offset = inner_to_data_offset + data_to_slice_offset;
+        let inner = Arc::allocate_for_header_and_slice(num_items);
 
-        // Compute the size of the real payload.
-        let slice_size = mem::size_of::<T>()
-            .checked_mul(num_items)
-            .expect("size overflows");
-        let usable_size = slice_offset
-            .checked_add(slice_size)
-            .expect("size overflows");
-
-        // Round up size to alignment.
-        let align = mem::align_of::<ArcInner<HeaderSlice<H, [T; 0]>>>();
-        let size = usable_size.wrapping_add(align - 1) & !(align - 1);
-        assert!(size >= usable_size, "size overflows");
-        let layout = Layout::from_size_align(size, align).expect("invalid layout");
-
-        let ptr: *mut ArcInner<HeaderSlice<H, [T]>>;
         unsafe {
-            let buffer = alloc::alloc::alloc(layout);
-            if buffer.is_null() {
-                alloc::alloc::handle_alloc_error(layout);
-            }
-
-            // Synthesize the fat pointer. We do this by claiming we have a direct
-            // pointer to a [T], and then changing the type of the borrow. The key
-            // point here is that the length portion of the fat pointer applies
-            // only to the number of elements in the dynamically-sized portion of
-            // the type, so the value will be the same whether it points to a [T]
-            // or something else with a [T] as its last member.
-            let fake_slice = ptr::slice_from_raw_parts_mut(buffer as *mut T, num_items);
-            ptr = fake_slice as *mut ArcInner<HeaderSlice<H, [T]>>;
-
-            let count = atomic::AtomicUsize::new(1);
-
             // Write the data.
-            ptr::write(&mut ((*ptr).count), count);
-            ptr::write(&mut ((*ptr).data.header), header);
-            let current = (*ptr).data.slice.as_mut_ptr();
-            ptr::copy_nonoverlapping(items.as_ptr(), current, num_items);
+            ptr::write(&mut ((*inner.as_ptr()).data.header), header);
+            let dst = (*inner.as_ptr()).data.slice.as_mut_ptr();
+            ptr::copy_nonoverlapping(items.as_ptr(), dst, num_items);
+        }
+
+        // Safety: ptr is valid & the inner structure is fully initialized
+        Arc {
+            p: inner,
+            phantom: PhantomData,
+        }
+    }
+
+    /// Creates an Arc for a HeaderSlice using the given header struct and
+    /// vec to generate the slice. The resulting Arc will be fat.
+    pub fn from_header_and_vec(header: H, mut v: Vec<T>) -> Self {
+        let len = v.len();
+
+        let inner = Arc::allocate_for_header_and_slice(len);
+
+        unsafe {
+            // Safety: inner is a valid pointer, so this can't go out of bounds
+            let dst = addr_of_mut!((*inner.as_ptr()).data.header);
+
+            // Safety: `dst` is valid for writes (just allocated)
+            ptr::write(dst, header);
         }
 
         unsafe {
-            Arc {
-                p: ptr::NonNull::new_unchecked(ptr),
-                phantom: PhantomData,
-            }
+            let src = v.as_mut_ptr();
+
+            // Safety: inner is a valid pointer, so this can't go out of bounds
+            let dst = addr_of_mut!((*inner.as_ptr()).data.slice) as *mut T;
+
+            // Safety:
+            // - `src` is valid for reads for `len` (got from `Vec`)
+            // - `dst` is valid for writes for `len` (just allocated, with layout for appropriate slice)
+            // - `src` and `dst` don't overlap (separate allocations)
+            ptr::copy_nonoverlapping(src, dst, len);
+
+            // Deallocate vec without dropping `T`
+            //
+            // Safety: 0..0 elements are always initialized, 0 <= cap for any cap
+            v.set_len(0);
+        }
+
+        // Safety: ptr is valid & the inner structure is fully initialized
+        Arc {
+            p: inner,
+            phantom: PhantomData,
         }
     }
 }
@@ -205,13 +171,96 @@ impl<H> HeaderWithLength<H> {
     }
 }
 
+impl<T: ?Sized> From<Arc<HeaderSlice<(), T>>> for Arc<T> {
+    fn from(this: Arc<HeaderSlice<(), T>>) -> Self {
+        debug_assert_eq!(
+            Layout::for_value::<HeaderSlice<(), T>>(&this),
+            Layout::for_value::<T>(&this.slice)
+        );
+
+        // Safety: `HeaderSlice<(), T>` and `T` has the same layout
+        unsafe { Arc::from_raw_inner(Arc::into_raw_inner(this) as _) }
+    }
+}
+
+impl<T: ?Sized> From<Arc<T>> for Arc<HeaderSlice<(), T>> {
+    fn from(this: Arc<T>) -> Self {
+        // Safety: `T` and `HeaderSlice<(), T>` has the same layout
+        unsafe { Arc::from_raw_inner(Arc::into_raw_inner(this) as _) }
+    }
+}
+
+impl<T: Copy> From<&[T]> for Arc<[T]> {
+    fn from(slice: &[T]) -> Self {
+        Arc::from_header_and_slice((), slice).into()
+    }
+}
+
+impl From<&str> for Arc<str> {
+    fn from(s: &str) -> Self {
+        Arc::from_header_and_str((), s).into()
+    }
+}
+
+impl From<String> for Arc<str> {
+    fn from(s: String) -> Self {
+        Self::from(&s[..])
+    }
+}
+
+// FIXME: once `pointer::with_metadata_of` is stable or
+//        implementable on stable without assuming ptr layout
+//        this will be able to accept `T: ?Sized`.
+impl<T> From<Box<T>> for Arc<T> {
+    fn from(b: Box<T>) -> Self {
+        let layout = Layout::for_value::<T>(&b);
+
+        // Safety: the closure only changes the type of the pointer
+        let inner = unsafe { Self::allocate_for_layout(layout, |mem| mem as *mut ArcInner<T>) };
+
+        unsafe {
+            let src = Box::into_raw(b);
+
+            // Safety: inner is a valid pointer, so this can't go out of bounds
+            let dst = addr_of_mut!((*inner.as_ptr()).data);
+
+            // Safety:
+            // - `src` is valid for reads (got from `Box`)
+            // - `dst` is valid for writes (just allocated)
+            // - `src` and `dst` don't overlap (separate allocations)
+            ptr::copy_nonoverlapping(src, dst, 1);
+
+            // Deallocate box without dropping `T`
+            //
+            // Safety:
+            // - `src` has been got from `Box::into_raw`
+            // - `ManuallyDrop<T>` is guaranteed to have the same layout as `T`
+            Box::<ManuallyDrop<T>>::from_raw(src as _);
+        }
+
+        Arc {
+            p: inner,
+            phantom: PhantomData,
+        }
+    }
+}
+
+impl<T> From<Vec<T>> for Arc<[T]> {
+    fn from(v: Vec<T>) -> Self {
+        Arc::from_header_and_vec((), v).into()
+    }
+}
+
 pub(crate) type HeaderSliceWithLength<H, T> = HeaderSlice<HeaderWithLength<H>, T>;
 
 #[cfg(test)]
 mod tests {
+    use alloc::boxed::Box;
+    use alloc::string::String;
+    use alloc::vec;
     use core::iter;
 
-    use crate::Arc;
+    use crate::{Arc, HeaderSlice};
 
     #[test]
     fn from_header_and_iter_smoke() {
@@ -233,6 +282,14 @@ mod tests {
     }
 
     #[test]
+    fn from_header_and_vec_smoke() {
+        let arc = Arc::from_header_and_vec((42u32, 17u8), vec![1u16, 2, 3, 4, 5, 6, 7]);
+
+        assert_eq!(arc.header, (42, 17));
+        assert_eq!(arc.slice, [1u16, 2, 3, 4, 5, 6, 7]);
+    }
+
+    #[test]
     fn from_header_and_iter_empty() {
         let arc = Arc::from_header_and_iter((42u32, 17u8), iter::empty::<u16>());
 
@@ -243,6 +300,14 @@ mod tests {
     #[test]
     fn from_header_and_slice_empty() {
         let arc = Arc::from_header_and_slice((42u32, 17u8), &[1u16; 0]);
+
+        assert_eq!(arc.header, (42, 17));
+        assert_eq!(arc.slice, []);
+    }
+
+    #[test]
+    fn from_header_and_vec_empty() {
+        let arc = Arc::from_header_and_vec((42u32, 17u8), vec![1u16; 0]);
 
         assert_eq!(arc.header, (42, 17));
         assert_eq!(arc.slice, []);
@@ -274,5 +339,40 @@ mod tests {
         let empty = Arc::from_header_and_str((), "");
         assert_eq!(empty.header, ());
         assert_eq!(&empty.slice, "");
+    }
+
+    #[test]
+    fn erase_and_create_from_thin_air_header() {
+        let a: Arc<HeaderSlice<(), [u32]>> = Arc::from_header_and_slice((), &[12, 17, 16]);
+        let b: Arc<[u32]> = a.into();
+
+        assert_eq!(&*b, [12, 17, 16]);
+
+        let c: Arc<HeaderSlice<(), [u32]>> = b.into();
+
+        assert_eq!(&c.slice, [12, 17, 16]);
+        assert_eq!(c.header, ());
+    }
+
+    #[test]
+    fn from_box_and_vec() {
+        let b = Box::new(String::from("xxx"));
+        let b = Arc::<String>::from(b);
+        assert_eq!(&*b, "xxx");
+
+        let v = vec![String::from("1"), String::from("2"), String::from("3")];
+        let v = Arc::<[_]>::from(v);
+        assert_eq!(
+            &*v,
+            [String::from("1"), String::from("2"), String::from("3")]
+        );
+
+        let mut v = vec![String::from("1"), String::from("2"), String::from("3")];
+        v.reserve(10);
+        let v = Arc::<[_]>::from(v);
+        assert_eq!(
+            &*v,
+            [String::from("1"), String::from("2"), String::from("3")]
+        );
     }
 }
