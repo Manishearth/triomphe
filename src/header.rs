@@ -235,7 +235,7 @@ impl<T> From<Box<T>> for Arc<T> {
             // Safety:
             // - `src` has been got from `Box::into_raw`
             // - `ManuallyDrop<T>` is guaranteed to have the same layout as `T`
-            Box::<ManuallyDrop<T>>::from_raw(src as _);
+            drop(Box::<ManuallyDrop<T>>::from_raw(src as _));
         }
 
         Arc {
