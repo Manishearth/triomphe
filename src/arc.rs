@@ -7,6 +7,7 @@ use core::convert::From;
 use core::ffi::c_void;
 use core::fmt;
 use core::hash::{Hash, Hasher};
+use core::iter::FromIterator;
 use core::marker::PhantomData;
 use core::mem::{ManuallyDrop, MaybeUninit};
 use core::ops::Deref;
@@ -683,6 +684,12 @@ impl<T> From<T> for Arc<T> {
     }
 }
 
+impl<A> FromIterator<A> for Arc<[A]> {
+    fn from_iter<T: IntoIterator<Item = A>>(iter: T) -> Self {
+        UniqueArc::from_iter(iter).shareable()
+    }
+}
+
 impl<T: ?Sized> borrow::Borrow<T> for Arc<T> {
     #[inline]
     fn borrow(&self) -> &T {
@@ -766,7 +773,10 @@ fn must_be_unique<T: ?Sized>(arc: &mut Arc<T>) -> &mut UniqueArc<T> {
 #[cfg(test)]
 mod tests {
     use crate::arc::Arc;
+    use alloc::borrow::ToOwned;
     use alloc::string::String;
+    use alloc::vec::Vec;
+    use core::iter::FromIterator;
     use core::mem::MaybeUninit;
     #[cfg(feature = "unsize")]
     use unsize::{CoerceUnsize, Coercion};
@@ -883,5 +893,25 @@ mod tests {
         unsafe {
             let _arc = Arc::from_raw(ptr);
         }
+    }
+
+    #[test]
+    fn from_iterator_exact_size() {
+        let arc = Arc::from_iter(Vec::from_iter(["ololo".to_owned(), "trololo".to_owned()]));
+        assert_eq!(1, Arc::count(&arc));
+        assert_eq!(["ololo".to_owned(), "trololo".to_owned()], *arc);
+    }
+
+    #[test]
+    fn from_iterator_unknown_size() {
+        let arc = Arc::from_iter(
+            Vec::from_iter(["ololo".to_owned(), "trololo".to_owned()])
+                .into_iter()
+                // Filter is opaque to iterators, so the resulting iterator
+                // will report lower bound of 0.
+                .filter(|_| true),
+        );
+        assert_eq!(1, Arc::count(&arc));
+        assert_eq!(["ololo".to_owned(), "trololo".to_owned()], *arc);
     }
 }

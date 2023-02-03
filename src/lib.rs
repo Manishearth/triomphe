@@ -64,6 +64,7 @@ mod arc_borrow;
 mod arc_swap_support;
 mod arc_union;
 mod header;
+mod iterator_as_exact_size_iterator;
 mod offset_arc;
 mod thin_arc;
 mod unique_arc;
