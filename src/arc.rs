@@ -145,6 +145,25 @@ impl<T> Arc<T> {
     }
 }
 
+impl<T> Arc<[T]> {
+    /// Reconstruct the `Arc<[T]>` from a raw pointer obtained from `into_raw()`.
+    ///
+    /// [`Arc::from_raw`] should accept unsized types, but this is not trivial to do correctly
+    /// until the feature [`pointer_bytes_offsets`](https://github.com/rust-lang/rust/issues/96283)
+    /// is stabilized. This is stopgap solution for slices.
+    pub unsafe fn from_raw_slice(ptr: *const [T]) -> Self {
+        let len = (*ptr).len();
+        // Assuming the offset of `T` in `ArcInner<T>` is the same
+        // as as offset of `[T]` in `ArcInner<[T]>`.
+        // (`offset_of!` macro requires `Sized`.)
+        let arc_inner_ptr = (ptr as *const u8).sub(offset_of!(ArcInner<T>, data));
+        // Synthesize the fat pointer: the pointer metadata for `Arc<[T]>`
+        // is the same as the pointer metadata for `[T]`: the length.
+        let fake_slice = ptr::slice_from_raw_parts_mut(arc_inner_ptr as *mut T, len);
+        Arc::from_raw_inner(fake_slice as *mut ArcInner<[T]>)
+    }
+}
+
 impl<T: ?Sized> Arc<T> {
     /// Convert the Arc<T> to a raw pointer, suitable for use across FFI
     ///
@@ -913,5 +932,14 @@ mod tests {
         );
         assert_eq!(1, Arc::count(&arc));
         assert_eq!(["ololo".to_owned(), "trololo".to_owned()], *arc);
+    }
+
+    #[test]
+    fn roundtrip_slice() {
+        let arc = Arc::from(Vec::from_iter([17, 19]));
+        let ptr = Arc::into_raw(arc);
+        let arc = unsafe { Arc::from_raw_slice(ptr) };
+        assert_eq!([17, 19], *arc);
+        assert_eq!(1, Arc::count(&arc));
     }
 }
