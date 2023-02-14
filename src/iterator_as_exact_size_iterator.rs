@@ -10,7 +10,11 @@ impl<I: Iterator> IteratorAsExactSizeIterator<I> {
     #[inline]
     pub(crate) fn new(iter: I) -> Self {
         let (lower, upper) = iter.size_hint();
-        debug_assert_eq!(Some(lower), upper);
+        debug_assert_eq!(
+            Some(lower),
+            upper,
+            "IteratorAsExactSizeIterator requires size hint lower == upper"
+        );
         IteratorAsExactSizeIterator { iter }
     }
 }
@@ -33,7 +37,11 @@ impl<I: Iterator> ExactSizeIterator for IteratorAsExactSizeIterator<I> {
     #[inline]
     fn len(&self) -> usize {
         let (lower, upper) = self.iter.size_hint();
-        debug_assert_eq!(Some(lower), upper);
+        debug_assert_eq!(
+            Some(lower),
+            upper,
+            "IteratorAsExactSizeIterator requires size hint lower == upper"
+        );
         lower
     }
 }
