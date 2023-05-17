@@ -942,4 +942,54 @@ mod tests {
         assert_eq!([17, 19], *arc);
         assert_eq!(1, Arc::count(&arc));
     }
+
+    #[test]
+    fn arc_eq_and_cmp() {
+        let x = Arc::from_header_and_iter("AB", b"CD".iter());
+        let y = Arc::from_header_and_iter("ab", b"cd".iter());
+        let z = y.clone();
+
+        assert_ne!(x, y);
+        assert_ne!(y, x);
+
+        assert_eq!(y, z);
+        assert_eq!(z, y);
+
+        assert_ne!(x, z);
+        assert_ne!(z, x);
+
+        assert!(x < y);
+        assert!(x < z);
+
+        assert!(y > x);
+        assert!(z > x);
+
+        assert!(!(x < x));
+        assert!(x <= x);
+    }
+
+    #[test]
+    fn arc_eq_and_partial_cmp() {
+        let x = Arc::from_header_and_iter([0.0], [0.1, 0.2].iter());
+        let y = Arc::from_header_and_iter([0.1], [0.2, 0.3].iter());
+        let z = y.clone();
+
+        assert_ne!(x, y);
+        assert_ne!(y, x);
+
+        assert_eq!(y, z);
+        assert_eq!(z, y);
+
+        assert_ne!(x, z);
+        assert_ne!(z, x);
+
+        assert!(x < y);
+        assert!(x < z);
+
+        assert!(y > x);
+        assert!(z > x);
+
+        assert!(!(x < x));
+        assert!(x <= x);
+    }
 }

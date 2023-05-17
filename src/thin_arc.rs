@@ -1,3 +1,4 @@
+use core::cmp::Ordering;
 use core::ffi::c_void;
 use core::fmt;
 use core::hash::{Hash, Hasher};
@@ -209,6 +210,20 @@ impl<H: PartialEq, T: PartialEq> PartialEq for ThinArc<H, T> {
 
 impl<H: Eq, T: Eq> Eq for ThinArc<H, T> {}
 
+impl<H: PartialOrd, T: PartialOrd> PartialOrd for ThinArc<H, T> {
+    #[inline]
+    fn partial_cmp(&self, other: &ThinArc<H, T>) -> Option<Ordering> {
+        ThinArc::with_arc(self, |a| ThinArc::with_arc(other, |b| a.partial_cmp(b)))
+    }
+}
+
+impl<H: Ord, T: Ord> Ord for ThinArc<H, T> {
+    #[inline]
+    fn cmp(&self, other: &ThinArc<H, T>) -> Ordering {
+        ThinArc::with_arc(self, |a| ThinArc::with_arc(other, |b| a.cmp(b)))
+    }
+}
+
 impl<H: Hash, T: Hash> Hash for ThinArc<H, T> {
     fn hash<HSR: Hasher>(&self, state: &mut HSR) {
         ThinArc::with_arc(self, |a| a.hash(state))
@@ -325,5 +340,55 @@ mod tests {
             let _x = unsafe { ThinArcCanary::from_raw(ptr) };
         }
         assert_eq!(canary.load(Acquire), 1);
+    }
+
+    #[test]
+    fn thin_eq_and_cmp() {
+        let x = ThinArc::from_header_and_iter("AB", b"CD".iter());
+        let y = ThinArc::from_header_and_iter("ab", b"cd".iter());
+        let z = y.clone();
+
+        assert_ne!(x, y);
+        assert_ne!(y, x);
+
+        assert_eq!(y, z);
+        assert_eq!(z, y);
+
+        assert_ne!(x, z);
+        assert_ne!(z, x);
+
+        assert!(x < y);
+        assert!(x < z);
+
+        assert!(y > x);
+        assert!(z > x);
+
+        assert!(!(x < x));
+        assert!(x <= x);
+    }
+
+    #[test]
+    fn thin_eq_and_partial_cmp() {
+        let x = ThinArc::from_header_and_iter([0.0], [0.1, 0.2].iter());
+        let y = ThinArc::from_header_and_iter([0.1], [0.2, 0.3].iter());
+        let z = y.clone();
+
+        assert_ne!(x, y);
+        assert_ne!(y, x);
+
+        assert_eq!(y, z);
+        assert_eq!(z, y);
+
+        assert_ne!(x, z);
+        assert_ne!(z, x);
+
+        assert!(x < y);
+        assert!(x < z);
+
+        assert!(y > x);
+        assert!(z > x);
+
+        assert!(!(x < x));
+        assert!(x <= x);
     }
 }
