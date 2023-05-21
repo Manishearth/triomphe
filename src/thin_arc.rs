@@ -344,51 +344,89 @@ mod tests {
 
     #[test]
     fn thin_eq_and_cmp() {
-        let x = ThinArc::from_header_and_iter("AB", b"CD".iter());
-        let y = ThinArc::from_header_and_iter("ab", b"cd".iter());
-        let z = y.clone();
+        [
+            [("*", &b"AB"[..]), ("*", &b"ab"[..])],
+            [("*", &b"AB"[..]), ("*", &b"a"[..])],
+            [("*", &b"A"[..]), ("*", &b"ab"[..])],
+            [("A", &b"*"[..]), ("a", &b"*"[..])],
+            [("a", &b"*"[..]), ("A", &b"*"[..])],
+            [("AB", &b"*"[..]), ("a", &b"*"[..])],
+            [("A", &b"*"[..]), ("ab", &b"*"[..])],
+        ]
+        .iter()
+        .for_each(|[lt @ (lh, ls), rt @ (rh, rs)]| {
+            let l = ThinArc::from_header_and_slice(lh, ls);
+            let r = ThinArc::from_header_and_slice(rh, rs);
 
-        assert_ne!(x, y);
-        assert_ne!(y, x);
+            assert_eq!(l, l);
+            assert_eq!(r, r);
 
-        assert_eq!(y, z);
-        assert_eq!(z, y);
+            assert_ne!(l, r);
+            assert_ne!(r, l);
 
-        assert_ne!(x, z);
-        assert_ne!(z, x);
+            assert_eq!(l <= l, lt <= lt, "{lt:?} <= {lt:?}");
+            assert_eq!(l >= l, lt >= lt, "{lt:?} >= {lt:?}");
 
-        assert!(x < y);
-        assert!(x < z);
+            assert_eq!(l < l, lt < lt, "{lt:?} < {lt:?}");
+            assert_eq!(l > l, lt > lt, "{lt:?} > {lt:?}");
 
-        assert!(y > x);
-        assert!(z > x);
+            assert_eq!(r <= r, rt <= rt, "{rt:?} <= {rt:?}");
+            assert_eq!(r >= r, rt >= rt, "{rt:?} >= {rt:?}");
 
-        assert!(!(x < x));
-        assert!(x <= x);
+            assert_eq!(r < r, rt < rt, "{rt:?} < {rt:?}");
+            assert_eq!(r > r, rt > rt, "{rt:?} > {rt:?}");
+
+            assert_eq!(l < r, lt < rt, "{lt:?} < {rt:?}");
+            assert_eq!(r > l, rt > lt, "{rt:?} > {lt:?}");
+        })
     }
 
     #[test]
     fn thin_eq_and_partial_cmp() {
-        let x = ThinArc::from_header_and_iter([0.0], [0.1, 0.2].iter());
-        let y = ThinArc::from_header_and_iter([0.1], [0.2, 0.3].iter());
-        let z = y.clone();
+        [
+            [(0.0, &[0.0, 0.0][..]), (1.0, &[0.0, 0.0][..])],
+            [(1.0, &[0.0, 0.0][..]), (0.0, &[0.0, 0.0][..])],
+            [(0.0, &[0.0][..]), (0.0, &[0.0, 0.0][..])],
+            [(0.0, &[0.0, 0.0][..]), (0.0, &[0.0][..])],
+            [(0.0, &[1.0, 2.0][..]), (0.0, &[10.0, 20.0][..])],
+        ]
+        .iter()
+        .for_each(|[lt @ (lh, ls), rt @ (rh, rs)]| {
+            let l = ThinArc::from_header_and_slice(lh, ls);
+            let r = ThinArc::from_header_and_slice(rh, rs);
 
-        assert_ne!(x, y);
-        assert_ne!(y, x);
+            assert_eq!(l, l);
+            assert_eq!(r, r);
 
-        assert_eq!(y, z);
-        assert_eq!(z, y);
+            assert_ne!(l, r);
+            assert_ne!(r, l);
 
-        assert_ne!(x, z);
-        assert_ne!(z, x);
+            assert_eq!(l <= l, lt <= lt, "{lt:?} <= {lt:?}");
+            assert_eq!(l >= l, lt >= lt, "{lt:?} >= {lt:?}");
 
-        assert!(x < y);
-        assert!(x < z);
+            assert_eq!(l < l, lt < lt, "{lt:?} < {lt:?}");
+            assert_eq!(l > l, lt > lt, "{lt:?} > {lt:?}");
 
-        assert!(y > x);
-        assert!(z > x);
+            assert_eq!(r <= r, rt <= rt, "{rt:?} <= {rt:?}");
+            assert_eq!(r >= r, rt >= rt, "{rt:?} >= {rt:?}");
 
-        assert!(!(x < x));
-        assert!(x <= x);
+            assert_eq!(r < r, rt < rt, "{rt:?} < {rt:?}");
+            assert_eq!(r > r, rt > rt, "{rt:?} > {rt:?}");
+
+            assert_eq!(l < r, lt < rt, "{lt:?} < {rt:?}");
+            assert_eq!(r > l, rt > lt, "{rt:?} > {lt:?}");
+        })
     }
+
+    #[allow(dead_code)]
+    const fn is_partial_ord<T: ?Sized + PartialOrd>() {}
+
+    #[allow(dead_code)]
+    const fn is_ord<T: ?Sized + Ord>() {}
+
+    // compile-time check that PartialOrd/Ord is correctly derived
+    const _: () = is_partial_ord::<ThinArc<f64, f64>>();
+    const _: () = is_partial_ord::<ThinArc<f64, u64>>();
+    const _: () = is_partial_ord::<ThinArc<u64, f64>>();
+    const _: () = is_ord::<ThinArc<u64, u64>>();
 }
