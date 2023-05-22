@@ -942,4 +942,90 @@ mod tests {
         assert_eq!([17, 19], *arc);
         assert_eq!(1, Arc::count(&arc));
     }
+
+    #[test]
+    fn arc_eq_and_cmp() {
+        [
+            [("*", &b"AB"[..]), ("*", &b"ab"[..])],
+            [("*", &b"AB"[..]), ("*", &b"a"[..])],
+            [("*", &b"A"[..]), ("*", &b"ab"[..])],
+            [("A", &b"*"[..]), ("a", &b"*"[..])],
+            [("a", &b"*"[..]), ("A", &b"*"[..])],
+            [("AB", &b"*"[..]), ("a", &b"*"[..])],
+            [("A", &b"*"[..]), ("ab", &b"*"[..])],
+        ]
+        .iter()
+        .for_each(|[lt @ (lh, ls), rt @ (rh, rs)]| {
+            let l = Arc::from_header_and_slice(lh, ls);
+            let r = Arc::from_header_and_slice(rh, rs);
+
+            assert_eq!(l, l);
+            assert_eq!(r, r);
+
+            assert_ne!(l, r);
+            assert_ne!(r, l);
+
+            assert_eq!(l <= l, lt <= lt, "{lt:?} <= {lt:?}");
+            assert_eq!(l >= l, lt >= lt, "{lt:?} >= {lt:?}");
+
+            assert_eq!(l < l, lt < lt, "{lt:?} < {lt:?}");
+            assert_eq!(l > l, lt > lt, "{lt:?} > {lt:?}");
+
+            assert_eq!(r <= r, rt <= rt, "{rt:?} <= {rt:?}");
+            assert_eq!(r >= r, rt >= rt, "{rt:?} >= {rt:?}");
+
+            assert_eq!(r < r, rt < rt, "{rt:?} < {rt:?}");
+            assert_eq!(r > r, rt > rt, "{rt:?} > {rt:?}");
+
+            assert_eq!(l < r, lt < rt, "{lt:?} < {rt:?}");
+            assert_eq!(r > l, rt > lt, "{rt:?} > {lt:?}");
+        })
+    }
+
+    #[test]
+    fn arc_eq_and_partial_cmp() {
+        [
+            [(0.0, &[0.0, 0.0][..]), (1.0, &[0.0, 0.0][..])],
+            [(1.0, &[0.0, 0.0][..]), (0.0, &[0.0, 0.0][..])],
+            [(0.0, &[0.0][..]), (0.0, &[0.0, 0.0][..])],
+            [(0.0, &[0.0, 0.0][..]), (0.0, &[0.0][..])],
+            [(0.0, &[1.0, 2.0][..]), (0.0, &[10.0, 20.0][..])],
+        ]
+        .iter()
+        .for_each(|[lt @ (lh, ls), rt @ (rh, rs)]| {
+            let l = Arc::from_header_and_slice(lh, ls);
+            let r = Arc::from_header_and_slice(rh, rs);
+
+            assert_eq!(l, l);
+            assert_eq!(r, r);
+
+            assert_ne!(l, r);
+            assert_ne!(r, l);
+
+            assert_eq!(l <= l, lt <= lt, "{lt:?} <= {lt:?}");
+            assert_eq!(l >= l, lt >= lt, "{lt:?} >= {lt:?}");
+
+            assert_eq!(l < l, lt < lt, "{lt:?} < {lt:?}");
+            assert_eq!(l > l, lt > lt, "{lt:?} > {lt:?}");
+
+            assert_eq!(r <= r, rt <= rt, "{rt:?} <= {rt:?}");
+            assert_eq!(r >= r, rt >= rt, "{rt:?} >= {rt:?}");
+
+            assert_eq!(r < r, rt < rt, "{rt:?} < {rt:?}");
+            assert_eq!(r > r, rt > rt, "{rt:?} > {rt:?}");
+
+            assert_eq!(l < r, lt < rt, "{lt:?} < {rt:?}");
+            assert_eq!(r > l, rt > lt, "{rt:?} > {lt:?}");
+        })
+    }
+
+    #[allow(dead_code)]
+    const fn is_partial_ord<T: ?Sized + PartialOrd>() {}
+
+    #[allow(dead_code)]
+    const fn is_ord<T: ?Sized + Ord>() {}
+
+    // compile-time check that PartialOrd/Ord is correctly derived
+    const _: () = is_partial_ord::<Arc<f64>>();
+    const _: () = is_ord::<Arc<u64>>();
 }

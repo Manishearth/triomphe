@@ -2,6 +2,7 @@ use alloc::alloc::Layout;
 use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
+use core::cmp::Ordering;
 use core::iter::{ExactSizeIterator, Iterator};
 use core::marker::PhantomData;
 use core::mem::{self, ManuallyDrop};
@@ -12,7 +13,7 @@ use super::{Arc, ArcInner};
 
 /// Structure to allow Arc-managing some fixed-sized data and a variably-sized
 /// slice in a single allocation.
-#[derive(Debug, Eq, PartialEq, Hash, PartialOrd)]
+#[derive(Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
 #[repr(C)]
 pub struct HeaderSlice<H, T: ?Sized> {
     /// The fixed-sized data.
@@ -153,7 +154,7 @@ impl<H> Arc<HeaderSlice<H, str>> {
 
 /// Header data with an inline length. Consumers that use HeaderWithLength as the
 /// Header type in HeaderSlice can take advantage of ThinArc.
-#[derive(Debug, Eq, PartialEq, Hash, PartialOrd)]
+#[derive(Debug, Eq, PartialEq, Hash)]
 #[repr(C)]
 pub struct HeaderWithLength<H> {
     /// The fixed-sized data.
@@ -252,6 +253,18 @@ impl<T> From<Vec<T>> for Arc<[T]> {
 }
 
 pub(crate) type HeaderSliceWithLength<H, T> = HeaderSlice<HeaderWithLength<H>, T>;
+
+impl<H: PartialOrd, T: ?Sized + PartialOrd> PartialOrd for HeaderSliceWithLength<H, T> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        (&self.header.header, &self.slice).partial_cmp(&(&other.header.header, &other.slice))
+    }
+}
+
+impl<H: Ord, T: ?Sized + Ord> Ord for HeaderSliceWithLength<H, T> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        (&self.header.header, &self.slice).cmp(&(&other.header.header, &other.slice))
+    }
+}
 
 #[cfg(test)]
 mod tests {
