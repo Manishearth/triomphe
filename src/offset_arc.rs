@@ -105,16 +105,20 @@ impl<T> OffsetArc<T> {
         T: Clone,
     {
         unsafe {
-            // extract the OffsetArc as an owned variable
+            // extract the OffsetArc as an owned variable. This does not modify
+            // the refcount and we should be careful to not drop `this`
             let this = ptr::read(self);
-            // treat it as a real Arc
-            let mut arc = Arc::from_raw_offset(this);
-            // obtain the mutable reference. Cast away the lifetime
-            // This may mutate `arc`
-            let ret = Arc::make_mut(&mut arc) as *mut _;
+            // treat it as a real Arc, but wrapped in a ManuallyDrop
+            // in case `Arc::make_mut()` panics in the clone impl
+            let mut arc = ManuallyDrop::new(Arc::from_raw_offset(this));
+            // obtain the mutable reference. Cast away the lifetime since
+            // we have the right lifetime bounds in the parameters.
+            // This may mutate `arc`.
+            let ret = Arc::make_mut(&mut *arc) as *mut _;
             // Store the possibly-mutated arc back inside, after converting
-            // it to a OffsetArc again
-            ptr::write(self, Arc::into_raw_offset(arc));
+            // it to a OffsetArc again. Release the ManuallyDrop.
+            // This also does not modify the refcount or call drop on self
+            ptr::write(self, Arc::into_raw_offset(ManuallyDrop::into_inner(arc)));
             &mut *ret
         }
     }
