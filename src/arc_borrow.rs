@@ -116,3 +116,11 @@ unsafe impl<'lt, T: 'lt, U: ?Sized + 'lt> unsize::CoerciblePtr<U> for ArcBorrow<
         ArcBorrow(inner.0.replace_ptr(new))
     }
 }
+
+#[test]
+fn clone_arc_borrow() {
+    let x = Arc::new(42);
+    let b: ArcBorrow<'_, i32> = x.borrow_arc();
+    let y = b.clone_arc();
+    assert_eq!(x, y);
+}
