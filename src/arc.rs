@@ -29,7 +29,7 @@ use crate::{abort, ArcBorrow, HeaderSlice, OffsetArc, UniqueArc};
 /// necessarily) at _exactly_ `MAX_REFCOUNT + 1` references.
 const MAX_REFCOUNT: usize = (isize::MAX) as usize;
 
-/// The object allocated by an Arc<T>
+/// The object allocated by an `Arc<T>`
 #[repr(C)]
 pub(crate) struct ArcInner<T: ?Sized> {
     pub(crate) count: atomic::AtomicUsize,
@@ -71,7 +71,7 @@ impl<T> Arc<T> {
         }
     }
 
-    /// Reconstruct the Arc<T> from a raw pointer obtained from into_raw()
+    /// Reconstruct the `Arc<T>` from a raw pointer obtained from into_raw()
     ///
     /// Note: This raw pointer will be offset in the allocation and must be preceded
     /// by the atomic count.
@@ -165,7 +165,7 @@ impl<T> Arc<[T]> {
 }
 
 impl<T: ?Sized> Arc<T> {
-    /// Convert the Arc<T> to a raw pointer, suitable for use across FFI
+    /// Convert the `Arc<T>` to a raw pointer, suitable for use across FFI
     ///
     /// Note: This returns a pointer to the data T, which is offset in the allocation.
     ///

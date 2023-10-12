@@ -81,7 +81,7 @@ impl<T> UniqueArc<T> {
 }
 
 impl<T: ?Sized> UniqueArc<T> {
-    /// Convert to a shareable Arc<T> once we're done mutating it
+    /// Convert to a shareable `Arc<T>` once we're done mutating it
     #[inline]
     pub fn shareable(self) -> Arc<T> {
         self.0
