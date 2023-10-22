@@ -8,7 +8,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
     - name: Build
       run: cargo build --verbose
     - name: Test
@@ -21,7 +21,7 @@ jobs:
   miri:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
     - name: Install Rust Nightly
       run: rustup toolchain install nightly --component miri --profile minimal
     - name: Miri Test
@@ -34,8 +34,8 @@ jobs:
   thread_sanitizer:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v2
-    - uses: actions/cache@v2
+    - uses: actions/checkout@v4
+    - uses: actions/cache@v3
       with:
         path: |
           ~/.cargo/bin/
@@ -59,8 +59,8 @@ jobs:
   address_sanitizer:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v2
-    - uses: actions/cache@v2
+    - uses: actions/checkout@v4
+    - uses: actions/cache@v3
       with:
         path: |
           ~/.cargo/bin/
