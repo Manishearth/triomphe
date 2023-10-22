@@ -80,7 +80,7 @@ pub use unique_arc::*;
 #[cfg(feature = "std")]
 use std::process::abort;
 
-// `no_std`-compatible abort by forcing a panic while already panicing.
+// `no_std`-compatible abort by forcing a panic while already panicking.
 #[cfg(not(feature = "std"))]
 #[cold]
 fn abort() -> ! {
