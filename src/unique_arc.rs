@@ -108,7 +108,7 @@ impl<T: ?Sized> UniqueArc<T> {
     ///
     /// The given `Arc` must have a reference count of exactly one
     pub(crate) unsafe fn from_arc_ref(arc: &mut Arc<T>) -> &mut Self {
-        debug_assert_eq!(Arc::count(&arc), 1);
+        debug_assert_eq!(Arc::count(arc), 1);
 
         // Safety: caller guarantees that `arc` is unique,
         //         `UniqueArc` is `repr(transparent)`
@@ -191,7 +191,7 @@ impl<T: ?Sized> Deref for UniqueArc<T> {
 
     #[inline]
     fn deref(&self) -> &T {
-        &*self.0
+        &self.0
     }
 }
 

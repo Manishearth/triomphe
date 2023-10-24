@@ -77,6 +77,10 @@ impl<T> Arc<T> {
     /// by the atomic count.
     ///
     /// It is recommended to use OffsetArc for this
+    ///
+    ///  # Safety
+    /// - The given pointer must be a valid pointer to `T` that came from [`Arc::into_raw`].
+    /// - After `from_raw`, the pointer must not be accessed.
     #[inline]
     pub unsafe fn from_raw(ptr: *const T) -> Self {
         // FIXME: when `byte_sub` is stabilized, this can accept T: ?Sized.
@@ -151,6 +155,10 @@ impl<T> Arc<[T]> {
     /// [`Arc::from_raw`] should accept unsized types, but this is not trivial to do correctly
     /// until the feature [`pointer_bytes_offsets`](https://github.com/rust-lang/rust/issues/96283)
     /// is stabilized. This is stopgap solution for slices.
+    ///
+    ///  # Safety
+    /// - The given pointer must be a valid pointer to `[T]` that came from [`Arc::into_raw`].
+    /// - After `from_raw_slice`, the pointer must not be accessed.
     pub unsafe fn from_raw_slice(ptr: *const [T]) -> Self {
         let len = (*ptr).len();
         // Assuming the offset of `T` in `ArcInner<T>` is the same
@@ -471,7 +479,7 @@ impl<T: Clone> Arc<T> {
     pub fn make_mut(this: &mut Self) -> &mut T {
         if !this.is_unique() {
             // Another pointer exists; clone
-            *this = Arc::new(T::clone(&this));
+            *this = Arc::new(T::clone(this));
         }
 
         unsafe {
@@ -497,7 +505,7 @@ impl<T: Clone> Arc<T> {
     pub fn make_unique(this: &mut Self) -> &mut UniqueArc<T> {
         if !this.is_unique() {
             // Another pointer exists; clone
-            *this = Arc::new(T::clone(&this));
+            *this = Arc::new(T::clone(this));
         }
 
         unsafe {
@@ -712,14 +720,14 @@ impl<A> FromIterator<A> for Arc<[A]> {
 impl<T: ?Sized> borrow::Borrow<T> for Arc<T> {
     #[inline]
     fn borrow(&self) -> &T {
-        &**self
+        self
     }
 }
 
 impl<T: ?Sized> AsRef<T> for Arc<T> {
     #[inline]
     fn as_ref(&self) -> &T {
-        &**self
+        self
     }
 }
 
