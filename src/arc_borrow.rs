@@ -46,6 +46,8 @@ impl<'a, T> ArcBorrow<'a, T> {
     /// e.g. if we obtain such a reference over FFI
     /// TODO: should from_ref be relaxed to unsized types? It can't be
     /// converted back to an Arc right now for unsized types.
+    /// # Safety
+    /// - The reference to `T` must have come from a Triomphe Arc, UniqueArc, or ArcBorrow.
     #[inline]
     pub unsafe fn from_ref(r: &'a T) -> Self {
         ArcBorrow(r)
