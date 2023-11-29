@@ -38,6 +38,7 @@ unsafe impl<H: Sync + Send, T: Sync + Send> Sync for ThinArc<H, T> {}
 // Synthesize a fat pointer from a thin pointer.
 //
 // See the comment around the analogous operation in from_header_and_iter.
+#[inline]
 fn thin_to_thick<H, T>(
     thin: *mut ArcInner<HeaderSliceWithLength<H, [T; 0]>>,
 ) -> *mut ArcInner<HeaderSliceWithLength<H, [T]>> {
@@ -149,7 +150,10 @@ impl<H, T> Deref for ThinArc<H, T> {
 impl<H, T> Clone for ThinArc<H, T> {
     #[inline]
     fn clone(&self) -> Self {
-        ThinArc::with_arc(self, |a| Arc::into_thin(a.clone()))
+        ThinArc::with_arc(self, |a| {
+            // Safety: `a` isn't mutable thus the header length remains valid
+            unsafe { Arc::into_thin_unchecked(a.clone()) }
+        })
     }
 }
 
@@ -166,10 +170,13 @@ impl<H, T> Drop for ThinArc<H, T> {
 impl<H, T> Arc<HeaderSliceWithLength<H, [T]>> {
     /// Converts an `Arc` into a `ThinArc`. This consumes the `Arc`, so the refcount
     /// is not modified.
+    ///
+    /// # Safety
+    /// Assumes that the header length matches the slice length.
     #[inline]
-    pub fn into_thin(a: Self) -> ThinArc<H, T> {
+    unsafe fn into_thin_unchecked(a: Self) -> ThinArc<H, T> {
         let a = ManuallyDrop::new(a);
-        assert_eq!(
+        debug_assert_eq!(
             a.header.length,
             a.slice.len(),
             "Length needs to be correct for ThinArc to work"
@@ -184,6 +191,18 @@ impl<H, T> Arc<HeaderSliceWithLength<H, [T]>> {
             },
             phantom: PhantomData,
         }
+    }
+
+    /// Converts an `Arc` into a `ThinArc`. This consumes the `Arc`, so the refcount
+    /// is not modified.
+    #[inline]
+    pub fn into_thin(a: Self) -> ThinArc<H, T> {
+        assert_eq!(
+            a.header.length,
+            a.slice.len(),
+            "Length needs to be correct for ThinArc to work"
+        );
+        unsafe { Self::into_thin_unchecked(a) }
     }
 
     /// Converts a `ThinArc` into an `Arc`. This consumes the `ThinArc`, so the refcount
