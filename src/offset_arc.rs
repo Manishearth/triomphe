@@ -133,6 +133,6 @@ impl<T> OffsetArc<T> {
     /// to an `Arc`
     #[inline]
     pub fn borrow_arc(&self) -> ArcBorrow<'_, T> {
-        ArcBorrow(&**self)
+        ArcBorrow(self.ptr, PhantomData)
     }
 }

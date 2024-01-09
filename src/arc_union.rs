@@ -60,11 +60,11 @@ impl<A, B> ArcUnion<A, B> {
     pub fn borrow(&self) -> ArcUnionBorrow<A, B> {
         if self.is_first() {
             let ptr = self.p.as_ptr() as *const A;
-            let borrow = unsafe { ArcBorrow::from_ref(&*ptr) };
+            let borrow = unsafe { ArcBorrow::from_ptr(ptr) };
             ArcUnionBorrow::First(borrow)
         } else {
             let ptr = ((self.p.as_ptr() as usize) & !0x1) as *const B;
-            let borrow = unsafe { ArcBorrow::from_ref(&*ptr) };
+            let borrow = unsafe { ArcBorrow::from_ptr(ptr) };
             ArcUnionBorrow::Second(borrow)
         }
     }

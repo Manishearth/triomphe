@@ -1,7 +1,8 @@
+use core::marker::PhantomData;
 use core::mem;
 use core::mem::ManuallyDrop;
 use core::ops::Deref;
-use core::ptr;
+use core::ptr::NonNull;
 
 use super::Arc;
 
@@ -22,7 +23,7 @@ use super::Arc;
 /// without needing to worry about where the `Arc<T>` is.
 #[derive(Debug, Eq, PartialEq)]
 #[repr(transparent)]
-pub struct ArcBorrow<'a, T: ?Sized + 'a>(pub(crate) &'a T);
+pub struct ArcBorrow<'a, T: ?Sized + 'a>(pub(crate) NonNull<T>, pub(crate) PhantomData<&'a T>);
 
 impl<'a, T> Copy for ArcBorrow<'a, T> {}
 impl<'a, T> Clone for ArcBorrow<'a, T> {
@@ -36,28 +37,35 @@ impl<'a, T> ArcBorrow<'a, T> {
     /// Clone this as an `Arc<T>`. This bumps the refcount.
     #[inline]
     pub fn clone_arc(&self) -> Arc<T> {
-        let arc = unsafe { Arc::from_raw(self.0) };
+        let arc = unsafe { Arc::from_raw(self.0.as_ptr()) };
         // addref it!
         mem::forget(arc.clone());
         arc
     }
 
-    /// For constructing from a reference known to be Arc-backed,
-    /// e.g. if we obtain such a reference over FFI
-    /// TODO: should from_ref be relaxed to unsized types? It can't be
-    /// converted back to an Arc right now for unsized types.
+    /// For constructing from a pointer known to be Arc-backed,
+    /// e.g. if we obtain such a pointer over FFI
+    ///
+    // TODO: should from_ptr be relaxed to unsized types? It can't be
+    // converted back to an Arc right now for unsized types.
+    //
     /// # Safety
-    /// - The reference to `T` must have come from a Triomphe Arc, UniqueArc, or ArcBorrow.
+    /// - The pointer to `T` must have come from a Triomphe `Arc`, `UniqueArc`, or `ArcBorrow`.
+    /// - The pointer to `T` must have full provenance over the `Arc`, `UniqueArc`, or `ArcBorrow`,
+    ///   in particular it must not have been derived from a `&T` reference, as references immediately
+    ///   loose all provenance over the adjacent reference counts. As of this writing,
+    ///   of the 3 types, only Trimphe's `Arc` offers a direct API for obtaining such a pointer:
+    ///   [`Arc::as_ptr`].
     #[inline]
-    pub unsafe fn from_ref(r: &'a T) -> Self {
-        ArcBorrow(r)
+    pub unsafe fn from_ptr(ptr: *const T) -> Self {
+        unsafe { ArcBorrow(NonNull::new_unchecked(ptr.cast_mut()), PhantomData) }
     }
 
     /// Compare two `ArcBorrow`s via pointer equality. Will only return
     /// true if they come from the same allocation
     #[inline]
     pub fn ptr_eq(this: &Self, other: &Self) -> bool {
-        ptr::eq(this.0 as *const T, other.0 as *const T)
+        this.0 == other.0
     }
 
     /// Temporarily converts |self| into a bonafide Arc and exposes it to the
@@ -69,7 +77,7 @@ impl<'a, T> ArcBorrow<'a, T> {
         T: 'static,
     {
         // Synthesize transient Arc, which never touches the refcount.
-        let transient = unsafe { ManuallyDrop::new(Arc::from_raw(self.0)) };
+        let transient = unsafe { ManuallyDrop::new(Arc::from_raw(self.0.as_ptr())) };
 
         // Expose the transient Arc to the callback, which may clone it if it wants
         // and forward the result to the user
@@ -80,7 +88,7 @@ impl<'a, T> ArcBorrow<'a, T> {
     /// self, which is incompatible with the signature of the Deref trait.
     #[inline]
     pub fn get(&self) -> &'a T {
-        self.0
+        unsafe { self.0.as_ref() }
     }
 }
 
@@ -89,7 +97,7 @@ impl<'a, T> Deref for ArcBorrow<'a, T> {
 
     #[inline]
     fn deref(&self) -> &T {
-        self.0
+        unsafe { self.0.as_ref() }
     }
 }
 

@@ -202,7 +202,12 @@ impl<T: ?Sized> Arc<T> {
     /// and can be converted into more `Arc<T>`s if necessary.
     #[inline]
     pub fn borrow_arc(&self) -> ArcBorrow<'_, T> {
-        ArcBorrow(&**self)
+        unsafe {
+            ArcBorrow(
+                NonNull::new_unchecked(self.as_ptr().cast_mut()),
+                PhantomData,
+            )
+        }
     }
 
     /// Returns the address on the heap of the Arc itself -- not the T within it -- for memory
