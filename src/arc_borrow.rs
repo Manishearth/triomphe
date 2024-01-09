@@ -116,15 +116,13 @@ unsafe impl<'lt, T: 'lt, U: ?Sized + 'lt> unsize::CoerciblePtr<U> for ArcBorrow<
     type Output = ArcBorrow<'lt, U>;
 
     fn as_sized_ptr(&mut self) -> *mut T {
-        // Returns a pointer to the inner data. We do not need to care about any particular
-        // provenance here, only the pointer value, which we need to reconstruct the new pointer.
-        self.0 as *const T as *mut T
+        self.0.as_ptr()
     }
 
     unsafe fn replace_ptr(self, new: *mut U) -> ArcBorrow<'lt, U> {
         let inner = ManuallyDrop::new(self);
         // Safety: backed by the same Arc that backed `self`.
-        ArcBorrow(inner.0.replace_ptr(new))
+        ArcBorrow(inner.0.replace_ptr(new), PhantomData)
     }
 }
 
