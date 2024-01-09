@@ -39,6 +39,11 @@ use super::{Arc, ArcInner};
 #[repr(transparent)]
 pub struct UniqueArc<T: ?Sized>(Arc<T>);
 
+// Uniquene ownership means that we can support weaker bounds than `T: Send + Sync`.
+// Thus, these impls can follow the precedent of std's `Box`, not `Arc`.
+unsafe impl<T: ?Sized + Send> Send for UniqueArc<T> {}
+unsafe impl<T: ?Sized + Sync> Sync for UniqueArc<T> {}
+
 impl<T> UniqueArc<T> {
     #[inline]
     /// Construct a new UniqueArc
