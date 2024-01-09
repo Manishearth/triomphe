@@ -58,7 +58,7 @@ impl<'a, T> ArcBorrow<'a, T> {
     ///   [`Arc::as_ptr`].
     #[inline]
     pub unsafe fn from_ptr(ptr: *const T) -> Self {
-        unsafe { ArcBorrow(NonNull::new_unchecked(ptr.cast_mut()), PhantomData) }
+        unsafe { ArcBorrow(NonNull::new_unchecked(ptr as *mut T), PhantomData) }
     }
 
     /// Compare two `ArcBorrow`s via pointer equality. Will only return
@@ -88,7 +88,7 @@ impl<'a, T> ArcBorrow<'a, T> {
     /// self, which is incompatible with the signature of the Deref trait.
     #[inline]
     pub fn get(&self) -> &'a T {
-        unsafe { self.0.as_ref() }
+        unsafe { &*self.0.as_ptr() }
     }
 }
 
@@ -97,7 +97,7 @@ impl<'a, T> Deref for ArcBorrow<'a, T> {
 
     #[inline]
     fn deref(&self) -> &T {
-        unsafe { self.0.as_ref() }
+        self.get()
     }
 }
 
