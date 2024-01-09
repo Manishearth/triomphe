@@ -66,7 +66,6 @@ impl<'a, T> ArcBorrow<'a, T> {
     pub fn with_arc<F, U>(&self, f: F) -> U
     where
         F: FnOnce(&Arc<T>) -> U,
-        T: 'static,
     {
         // Synthesize transient Arc, which never touches the refcount.
         let transient = unsafe { ManuallyDrop::new(Arc::from_raw(self.0)) };
