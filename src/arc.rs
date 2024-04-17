@@ -257,11 +257,11 @@ impl<T: ?Sized> Arc<T> {
         let _ = Box::from_raw(self.ptr());
     }
 
-    /// Test pointer equality between the two Arcs, i.e. they must be the _same_
-    /// allocation
+    /// Returns `true` if the two `Arc`s point to the same allocation in a vein similar to
+    /// [`ptr::eq`]. This function ignores the metadata of  `dyn Trait` pointers.
     #[inline]
     pub fn ptr_eq(this: &Self, other: &Self) -> bool {
-        this.ptr() == other.ptr()
+        ptr::addr_eq(this.ptr(), other.ptr())
     }
 
     pub(crate) fn ptr(&self) -> *mut ArcInner<T> {
