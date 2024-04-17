@@ -8,6 +8,7 @@ use core::mem::ManuallyDrop;
 use core::ops::Deref;
 use core::ptr;
 use core::usize;
+use ArcBorrow;
 
 use super::{Arc, ArcInner, HeaderSliceWithLength, HeaderWithLength};
 
@@ -135,6 +136,19 @@ impl<H, T> ThinArc<H, T> {
     #[inline]
     pub fn as_ptr(&self) -> *const c_void {
         self.ptr()
+    }
+
+    /// The reference count of this `Arc`.
+    ///
+    /// The number does not include borrowed pointers,
+    /// or temporary `Arc` pointers created with functions like
+    /// [`ArcBorrow::with_arc`].
+    ///
+    /// The function is called `strong_count` to mirror `std::sync::Arc::strong_count`,
+    /// however `triomphe::Arc` does not support weak references.
+    #[inline]
+    pub fn strong_count(this: &Self) -> usize {
+        Self::with_arc(this, |arc| Arc::strong_count(arc))
     }
 }
 

@@ -56,6 +56,12 @@ impl<A, B> ArcUnion<A, B> {
         this.p == other.p
     }
 
+    /// Reference count.
+    #[inline]
+    pub fn strong_count(this: &Self) -> usize {
+        ArcUnionBorrow::strong_count(&this.borrow())
+    }
+
     /// Returns an enum representing a borrow of either A or B.
     pub fn borrow(&self) -> ArcUnionBorrow<A, B> {
         if self.is_first() {
@@ -135,5 +141,23 @@ impl<A, B> Drop for ArcUnion<A, B> {
 impl<A: fmt::Debug, B: fmt::Debug> fmt::Debug for ArcUnion<A, B> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         fmt::Debug::fmt(&self.borrow(), f)
+    }
+}
+
+impl<'a, A, B> ArcUnionBorrow<'a, A, B> {
+    /// The reference count of this `Arc`.
+    ///
+    /// The number does not include borrowed pointers,
+    /// or temporary `Arc` pointers created with functions like
+    /// [`ArcBorrow::with_arc`].
+    ///
+    /// The function is called `strong_count` to mirror `std::sync::Arc::strong_count`,
+    /// however `triomphe::Arc` does not support weak references.
+    #[inline]
+    pub fn strong_count(this: &Self) -> usize {
+        match this {
+            ArcUnionBorrow::First(arc) => ArcBorrow::strong_count(arc),
+            ArcUnionBorrow::Second(arc) => ArcBorrow::strong_count(arc),
+        }
     }
 }
