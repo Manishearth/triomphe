@@ -71,6 +71,19 @@ impl<'a, T> ArcBorrow<'a, T> {
         this.0 == other.0
     }
 
+    /// The reference count of the underlying `Arc`.
+    ///
+    /// The number does not include borrowed pointers,
+    /// or temporary `Arc` pointers created with functions like
+    /// [`ArcBorrow::with_arc`].
+    ///
+    /// The function is called `strong_count` to mirror `std::sync::Arc::strong_count`,
+    /// however `triomphe::Arc` does not support weak references.
+    #[inline]
+    pub fn strong_count(this: &Self) -> usize {
+        Self::with_arc(this, |arc| Arc::strong_count(arc))
+    }
+
     /// Temporarily converts |self| into a bonafide Arc and exposes it to the
     /// provided callback. The refcount is not modified.
     #[inline]

@@ -211,6 +211,19 @@ impl<T: ?Sized> Arc<T> {
         self.p.as_ptr() as *const ArcInner<T> as *const c_void
     }
 
+    /// The reference count of this `Arc`.
+    ///
+    /// The number does not include borrowed pointers,
+    /// or temporary `Arc` pointers created with functions like
+    /// [`ArcBorrow::with_arc`].
+    ///
+    /// The function is called `strong_count` to mirror `std::sync::Arc::strong_count`,
+    /// however `triomphe::Arc` does not support weak references.
+    #[inline]
+    pub fn strong_count(this: &Self) -> usize {
+        this.inner().count.load(Relaxed)
+    }
+
     #[inline]
     pub(super) fn into_raw_inner(this: Self) -> *mut ArcInner<T> {
         let this = ManuallyDrop::new(this);
@@ -1025,6 +1038,16 @@ mod tests {
             assert_eq!(l < r, lt < rt, "{lt:?} < {rt:?}");
             assert_eq!(r > l, rt > lt, "{rt:?} > {lt:?}");
         })
+    }
+
+    #[test]
+    fn test_strong_count() {
+        let arc = Arc::new(17);
+        assert_eq!(1, Arc::strong_count(&arc));
+        let arc2 = arc.clone();
+        assert_eq!(2, Arc::strong_count(&arc));
+        drop(arc);
+        assert_eq!(1, Arc::strong_count(&arc2));
     }
 
     #[allow(dead_code)]
