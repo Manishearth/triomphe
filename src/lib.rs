@@ -34,30 +34,6 @@ extern crate stable_deref_trait;
 #[cfg(feature = "unsize")]
 extern crate unsize;
 
-/// Calculates the offset of the specified field from the start of the named struct.
-/// This macro is impossible to be const until feature(const_ptr_offset_from) is stable.
-macro_rules! offset_of {
-    ($ty: path, $field: tt) => {{
-        // ensure the type is a named struct
-        // ensure the field exists and is accessible
-        let $ty { $field: _, .. };
-
-        let uninit = <::core::mem::MaybeUninit<$ty>>::uninit(); // const since 1.36
-
-        let base_ptr: *const $ty = uninit.as_ptr(); // const since 1.59
-
-        #[allow(unused_unsafe)]
-        let field_ptr = unsafe { ::core::ptr::addr_of!((*base_ptr).$field) }; // since 1.51
-
-        // // the const version requires feature(const_ptr_offset_from)
-        // // https://github.com/rust-lang/rust/issues/92980
-        // #[allow(unused_unsafe)]
-        // unsafe { (field_ptr as *const u8).offset_from(base_ptr as *const u8) as usize }
-
-        (field_ptr as usize) - (base_ptr as usize)
-    }};
-}
-
 mod arc;
 mod arc_borrow;
 #[cfg(feature = "arc-swap")]

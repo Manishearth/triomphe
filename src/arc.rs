@@ -39,6 +39,26 @@ pub(crate) struct ArcInner<T: ?Sized> {
 unsafe impl<T: ?Sized + Sync + Send> Send for ArcInner<T> {}
 unsafe impl<T: ?Sized + Sync + Send> Sync for ArcInner<T> {}
 
+impl<T: ?Sized> ArcInner<T> {
+    /// Compute the offset of the `data` field within `ArcInner<T>`.
+    ///
+    /// # Safety
+    ///
+    /// - The pointer must be created from `Arc::into_raw` or similar functions
+    /// - The pointee must be initialized (`&*value` must not be UB).
+    ///   That happens automatically if the pointer comes from `Arc` and type was not changed.
+    ///   This is **not** the case, for example, when `Arc` was uninitialized `MaybeUninit<T>`
+    ///   and the pointer was cast to `*const T`.
+    unsafe fn offset_of_data(value: *const T) -> usize {
+        // We can use `Layout::for_value_raw` when it is stable.
+        let value = &*value;
+
+        let layout = Layout::new::<atomic::AtomicUsize>();
+        let (_, offset) = layout.extend(Layout::for_value(value)).unwrap();
+        offset
+    }
+}
+
 /// An atomically reference counted shared pointer
 ///
 /// See the documentation for [`Arc`] in the standard library. Unlike the
@@ -69,26 +89,6 @@ impl<T> Arc<T> {
                 phantom: PhantomData,
             }
         }
-    }
-
-    /// Reconstruct the `Arc<T>` from a raw pointer obtained from into_raw()
-    ///
-    /// Note: This raw pointer will be offset in the allocation and must be preceded
-    /// by the atomic count.
-    ///
-    /// It is recommended to use OffsetArc for this
-    ///
-    ///  # Safety
-    /// - The given pointer must be a valid pointer to `T` that came from [`Arc::into_raw`].
-    /// - After `from_raw`, the pointer must not be accessed.
-    #[inline]
-    pub unsafe fn from_raw(ptr: *const T) -> Self {
-        // FIXME: when `byte_sub` is stabilized, this can accept T: ?Sized.
-
-        // To find the corresponding pointer to the `ArcInner` we need
-        // to subtract the offset of the `data` field from the pointer.
-        let ptr = (ptr as *const u8).sub(offset_of!(ArcInner<T>, data));
-        Arc::from_raw_inner(ptr as *mut ArcInner<T>)
     }
 
     /// Temporarily converts |self| into a bonafide OffsetArc and exposes it to the
@@ -160,15 +160,7 @@ impl<T> Arc<[T]> {
     /// - The given pointer must be a valid pointer to `[T]` that came from [`Arc::into_raw`].
     /// - After `from_raw_slice`, the pointer must not be accessed.
     pub unsafe fn from_raw_slice(ptr: *const [T]) -> Self {
-        let len = (*ptr).len();
-        // Assuming the offset of `T` in `ArcInner<T>` is the same
-        // as as offset of `[T]` in `ArcInner<[T]>`.
-        // (`offset_of!` macro requires `Sized`.)
-        let arc_inner_ptr = (ptr as *const u8).sub(offset_of!(ArcInner<T>, data));
-        // Synthesize the fat pointer: the pointer metadata for `Arc<[T]>`
-        // is the same as the pointer metadata for `[T]`: the length.
-        let fake_slice = ptr::slice_from_raw_parts_mut(arc_inner_ptr as *mut T, len);
-        Arc::from_raw_inner(fake_slice as *mut ArcInner<[T]>)
+        Arc::from_raw(ptr)
     }
 }
 
@@ -182,6 +174,32 @@ impl<T: ?Sized> Arc<T> {
     pub fn into_raw(this: Self) -> *const T {
         let this = ManuallyDrop::new(this);
         this.as_ptr()
+    }
+
+    /// Reconstruct the `Arc<T>` from a raw pointer obtained from into_raw()
+    ///
+    /// Note: This raw pointer will be offset in the allocation and must be preceded
+    /// by the atomic count.
+    ///
+    /// It is recommended to use OffsetArc for this
+    ///
+    ///  # Safety
+    /// - The given pointer must be a valid pointer to `T` that came from [`Arc::into_raw`].
+    /// - After `from_raw`, the pointer must not be accessed.
+    #[inline]
+    pub unsafe fn from_raw(ptr: *const T) -> Self {
+        // To find the corresponding pointer to the `ArcInner` we need
+        // to subtract the offset of the `data` field from the pointer.
+
+        // SAFETY: `ptr` comes from `ArcInner.data`, so it must be initialized.
+        let offset_of_data = ArcInner::<T>::offset_of_data(ptr);
+
+        // SAFETY: `from_raw_inner` expects a pointer to the beginning of the allocation,
+        //   not a pointer to data part.
+        //  `ptr` points to `ArcInner.data`, so subtraction results
+        //   in the beginning of the `ArcInner`, which is the beginning of the allocation.
+        let arc_inner_ptr = ptr.byte_sub(offset_of_data);
+        Arc::from_raw_inner(arc_inner_ptr as *mut ArcInner<T>)
     }
 
     /// Returns the raw pointer.
@@ -1058,6 +1076,25 @@ mod tests {
         let arc = Arc::new(f32::NAN);
         // TODO: this is a bug.
         assert_eq!(arc, arc);
+    }
+
+    #[test]
+    fn test_into_raw_from_raw_dst() {
+        trait AnInteger {
+            fn get_me_an_integer(&self) -> u64;
+        }
+
+        impl AnInteger for u32 {
+            fn get_me_an_integer(&self) -> u64 {
+                *self as u64
+            }
+        }
+
+        let arc = Arc::<u32>::new(19);
+        let data = Arc::into_raw(arc);
+        let data: *const dyn AnInteger = data as *const _;
+        let arc: Arc<dyn AnInteger> = unsafe { Arc::from_raw(data) };
+        assert_eq!(19, arc.get_me_an_integer());
     }
 
     #[allow(dead_code)]
