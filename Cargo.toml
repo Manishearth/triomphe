@@ -12,6 +12,9 @@ categories = ["concurrency", "data-structures"]
 std = []
 default = ["serde", "stable_deref_trait", "std"]
 
+[package.metadata.docs.rs]
+all-features = true
+
 [dependencies]
 serde = { version = "1.0", default-features = false, optional = true }
 stable_deref_trait = { version = "1.1.1", default-features = false, optional = true }
