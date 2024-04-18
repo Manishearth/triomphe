@@ -42,21 +42,15 @@ impl<H, T> Arc<HeaderSlice<H, [T]>> {
             // Note that any panics here (i.e. from the iterator) are safe, since
             // we'll just leak the uninitialized memory.
             ptr::write(&mut ((*inner.as_ptr()).data.header), header);
-            if num_items != 0 {
-                let mut current = (*inner.as_ptr()).data.slice.as_mut_ptr();
-                for _ in 0..num_items {
-                    ptr::write(
-                        current,
-                        items
-                            .next()
-                            .expect("ExactSizeIterator over-reported length"),
-                    );
-                    current = current.offset(1);
-                }
-                assert!(
-                    items.next().is_none(),
-                    "ExactSizeIterator under-reported length"
+            let mut current = (*inner.as_ptr()).data.slice.as_mut_ptr();
+            for _ in 0..num_items {
+                ptr::write(
+                    current,
+                    items
+                        .next()
+                        .expect("ExactSizeIterator over-reported length"),
                 );
+                current = current.offset(1);
             }
             assert!(
                 items.next().is_none(),
