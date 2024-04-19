@@ -647,6 +647,7 @@ impl<T: ?Sized> Drop for Arc<T> {
 
 impl<T: ?Sized + PartialEq> PartialEq for Arc<T> {
     fn eq(&self, other: &Arc<T>) -> bool {
+        // TODO: pointer equality is incorrect if `T` is not `Eq`.
         Self::ptr_eq(self, other) || *(*self) == *(*other)
     }
 
@@ -1048,6 +1049,15 @@ mod tests {
         assert_eq!(2, Arc::strong_count(&arc));
         drop(arc);
         assert_eq!(1, Arc::strong_count(&arc2));
+    }
+
+    #[test]
+    fn test_partial_eq_bug() {
+        let float = f32::NAN;
+        assert_ne!(float, float);
+        let arc = Arc::new(f32::NAN);
+        // TODO: this is a bug.
+        assert_eq!(arc, arc);
     }
 
     #[allow(dead_code)]
