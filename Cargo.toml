@@ -1,12 +1,15 @@
 [package]
 name = "triomphe"
-version = "0.1.11"
-authors = ["The Servo Project Developers"]
+version = "0.1.12"
+authors = ["Manish Goregaokar <manishsmail@gmail.com>", "The Servo Project Developers"]
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/Manishearth/triomphe"
 description = "A fork of std::sync::Arc with some extra functionality and without weak references (originally servo_arc)"
 keywords = ["arc", "ffi", "sync", "data-structure"]
 categories = ["concurrency", "data-structures"]
+
+# MSRV policy: May be updated in minor versions
+rust-version = "1.76"
 
 [features]
 std = []
