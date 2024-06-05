@@ -8,6 +8,9 @@ description = "A fork of std::sync::Arc with some extra functionality and withou
 keywords = ["arc", "ffi", "sync", "data-structure"]
 categories = ["concurrency", "data-structures"]
 
+# MSRV policy: May be updated in minor versions
+rust-version = "1.76"
+
 [features]
 std = []
 default = ["serde", "stable_deref_trait", "std"]
