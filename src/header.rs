@@ -13,7 +13,7 @@ use super::{Arc, ArcInner};
 
 /// Structure to allow Arc-managing some fixed-sized data and a variably-sized
 /// slice in a single allocation.
-#[derive(Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, PartialOrd, Ord)]
 #[repr(C)]
 pub struct HeaderSlice<H, T: ?Sized> {
     /// The fixed-sized data.
@@ -148,7 +148,7 @@ impl<H> Arc<HeaderSlice<H, str>> {
 
 /// Header data with an inline length. Consumers that use HeaderWithLength as the
 /// Header type in HeaderSlice can take advantage of ThinArc.
-#[derive(Debug, Eq, PartialEq, Hash)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 #[repr(C)]
 pub struct HeaderWithLength<H> {
     /// The fixed-sized data.
@@ -381,5 +381,34 @@ mod tests {
             &*v,
             [String::from("1"), String::from("2"), String::from("3")]
         );
+    }
+
+    /// It’s possible to make a generic `Arc` wrapper that supports both:
+    ///
+    /// * `T: !Sized`
+    /// * `Arc::make_mut` if `T: Sized`
+    #[test]
+    fn dst_and_make_mut() {
+        struct MyArc<T: ?Sized>(Arc<HeaderSlice<MyHeader, T>>);
+
+        #[derive(Clone)]
+        struct MyHeader {
+            // Very interesting things go here
+        }
+
+        // MyArc<str> is possible
+        let dst: MyArc<str> = MyArc(Arc::from_header_and_str(MyHeader {}, "example"));
+        assert_eq!(&dst.0.slice, "example");
+
+        // `make_mut` is still available when `T: Sized`
+        let mut answer: MyArc<u32> = MyArc(Arc::new(HeaderSlice {
+            header: MyHeader {},
+            // Not actually a slice in this case,
+            // but `HeaderSlice` is required to use `from_header_and_str`
+            // and we want the same `MyArc` to support both cases.
+            slice: 6 * 9,
+        }));
+        let mut_ref = Arc::make_mut(&mut answer.0);
+        mut_ref.slice = 42;
     }
 }
