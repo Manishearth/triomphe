@@ -4,7 +4,6 @@ on: [push, pull_request]
 
 jobs:
   build:
-
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -13,74 +12,78 @@ jobs:
           - 1.76
           - nightly
     steps:
-    - uses: actions/checkout@v4
-    - name: Build
-      run: cargo build --verbose
-    - name: Test
-      run: cargo test
-    - name: Test --no-default-features
-      run: cargo test --no-default-features --verbose
-    - name: Test --all-features
-      run: cargo test --all-features --verbose
+      - uses: actions/checkout@v4
+      - name: Build
+        run: cargo build --verbose
+      - name: Test
+        run: cargo test
+      - name: Test --no-default-features
+        run: cargo test --no-default-features --verbose
+      - name: Test --all-features
+        if: matrix.rust == 'nightly'
+        run: cargo test --all-features --verbose
+      - name: Test --all-stable-features
+        if: matrix.rust != 'nightly'
+        run: cargo test --features "std,serde,stable_deref_trait,arc-swap,unsize" --verbose
 
   miri:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
-    - name: Install Rust Nightly
-      run: rustup toolchain install nightly --component miri --profile minimal
-    - name: Miri Test
-      run: cargo +nightly miri test
-    - name: Test --no-default-features
-      run: cargo +nightly miri test --no-default-features
-    - name: Test --all-features
-      run: cargo +nightly miri test --all-features
+      - uses: actions/checkout@v4
+      - name: Install Rust Nightly
+        run: rustup toolchain install nightly --component miri --profile minimal
+      - name: Miri Test
+        run: cargo +nightly miri test
+      - name: Test --no-default-features
+        run: cargo +nightly miri test --no-default-features
+      - name: Test --all-features
+        run: cargo +nightly miri test --all-features
 
   thread_sanitizer:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
-    - uses: actions/cache@v3
-      with:
-        path: |
-          ~/.cargo/bin/
-          ~/.cargo/registry/index/
-          ~/.cargo/registry/cache/
-          ~/.cargo/git/db/
-          target/
-        key: ${{ github.event.repository.name }}-${{ runner.os }}-cargo-thread_sanitizer-v2
-    - name: Install latest nightly
-      uses: actions-rs/toolchain@v1
-      with:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ github.event.repository.name }}-${{ runner.os }}-cargo-thread_sanitizer-v2
+      - name: Install latest nightly
+        uses: actions-rs/toolchain@v1
+        with:
           toolchain: nightly
           override: true
           components: rust-src
-    - name: Run thread sanitizer
-      run: |
-        export RUSTDOCFLAGS='-Zsanitizer=thread'
-        export RUSTFLAGS='-Zsanitizer=thread'
-        for _ in $(seq 1 10); do cargo +nightly test -Z build-std --target --target $(uname -m)-unknown-linux-gnu; done
+      - name: Run thread sanitizer
+        run: |
+          export RUSTDOCFLAGS='-Zsanitizer=thread'
+          export RUSTFLAGS='-Zsanitizer=thread'
+          for _ in $(seq 1 10); do cargo +nightly test -Z build-std --target --target $(uname -m)-unknown-linux-gnu; done
 
   address_sanitizer:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
-    - uses: actions/cache@v3
-      with:
-        path: |
-          ~/.cargo/bin/
-          ~/.cargo/registry/index/
-          ~/.cargo/registry/cache/
-          ~/.cargo/git/db/
-          target/
-        key: ${{ github.event.repository.name }}-${{ runner.os }}-cargo-address_sanitizer-v2
-    - name: Install latest nightly
-      uses: actions-rs/toolchain@v1
-      with:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ github.event.repository.name }}-${{ runner.os }}-cargo-address_sanitizer-v2
+      - name: Install latest nightly
+        uses: actions-rs/toolchain@v1
+        with:
           toolchain: nightly
           override: true
-    - name: Run address sanitizer
-      run: |
-        export RUSTDOCFLAGS='-Zsanitizer=address'
-        export RUSTFLAGS='-Zsanitizer=address'
-        for _ in $(seq 1 10); do cargo +nightly test; done
+      - name: Run address sanitizer
+        run: |
+          export RUSTDOCFLAGS='-Zsanitizer=address'
+          export RUSTFLAGS='-Zsanitizer=address'
+          for _ in $(seq 1 10); do cargo +nightly test; done

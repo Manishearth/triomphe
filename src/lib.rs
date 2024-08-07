@@ -20,6 +20,7 @@
 
 #![allow(missing_docs)]
 #![cfg_attr(not(feature = "std"), no_std)]
+#![cfg_attr(feature = "unstable", feature(layout_for_ptr, set_ptr_value))]
 
 extern crate alloc;
 #[cfg(feature = "std")]
