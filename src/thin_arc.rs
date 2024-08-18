@@ -69,6 +69,26 @@ impl<H, T> ThinArc<H, T> {
         f(&transient)
     }
 
+    /// Temporarily converts |self| into a bonafide Arc and exposes it to the
+    /// provided callback. The refcount is not modified.
+    #[inline]
+    pub fn with_arc_mut<F, U>(&mut self, f: F) -> U
+    where
+        F: FnOnce(&mut Arc<HeaderSliceWithLength<H, [T]>>) -> U,
+    {
+        // Synthesize transient Arc, which never touches the refcount of the ArcInner.
+        let mut transient = unsafe {
+            ManuallyDrop::new(Arc {
+                p: ptr::NonNull::new_unchecked(thin_to_thick(self.ptr.as_ptr())),
+                phantom: PhantomData,
+            })
+        };
+
+        // Expose the transient Arc to the callback, which may clone it if it wants
+        // and forward the result to the user
+        f(&mut transient)
+    }
+
     /// Creates a `ThinArc` for a HeaderSlice using the given header struct and
     /// iterator to generate the slice.
     pub fn from_header_and_iter<I>(header: H, items: I) -> Self
@@ -448,6 +468,36 @@ mod tests {
             assert_eq!(l < r, lt < rt, "{lt:?} < {rt:?}");
             assert_eq!(r > l, rt > lt, "{rt:?} > {lt:?}");
         })
+    }
+
+    #[test]
+    fn with_arc_mut() {
+        let mut arc: ThinArc<u8, u16> = ThinArc::from_header_and_slice(1u8, &[1, 2, 3]);
+        arc.with_arc_mut(|arc| Arc::get_mut(arc).unwrap().slice.fill(2));
+        arc.with_arc_mut(|arc| assert!(Arc::get_unique(arc).is_some()));
+        arc.with_arc(|arc| assert!(Arc::is_unique(arc)));
+        // Using clone to that the layout generated in new_uninit_slice is compatible
+        // with ArcInner.
+        let arcs = [
+            arc.clone(),
+            arc.clone(),
+            arc.clone(),
+            arc.clone(),
+            arc.clone(),
+        ];
+        arc.with_arc(|arc| assert_eq!(6, Arc::count(&arc)));
+
+        // If the layout is not compatible, then the data might be corrupted.
+        assert_eq!(arc.header.header, 1);
+        assert_eq!(&arc.slice, [2, 2, 2]);
+
+        // Drop the arcs and check the count and the content to
+        // make sure it isn't corrupted.
+        drop(arcs);
+        arc.with_arc_mut(|arc| assert!(Arc::get_unique(arc).is_some()));
+        arc.with_arc(|arc| assert!(Arc::is_unique(arc)));
+        assert_eq!(arc.header.header, 1);
+        assert_eq!(&arc.slice, [2, 2, 2]);
     }
 
     #[allow(dead_code)]
