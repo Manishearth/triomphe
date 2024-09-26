@@ -5,7 +5,7 @@ use core::iter::FromIterator;
 use core::marker::PhantomData;
 use core::mem::{ManuallyDrop, MaybeUninit};
 use core::ops::{Deref, DerefMut};
-use core::ptr::{self, NonNull};
+use core::ptr::{self, addr_of_mut, NonNull};
 use core::sync::atomic::AtomicUsize;
 
 use crate::iterator_as_exact_size_iterator::IteratorAsExactSizeIterator;
@@ -160,18 +160,14 @@ impl<T> UniqueArc<MaybeUninit<T>> {
 impl<T> UniqueArc<[MaybeUninit<T>]> {
     /// Create an Arc contains an array `[MaybeUninit<T>]` of `len`.
     pub fn new_uninit_slice(len: usize) -> Self {
-        let ptr: NonNull<ArcInner<HeaderSlice<(), [MaybeUninit<T>]>>> =
-            Arc::allocate_for_header_and_slice(len);
-
-        // Safety:
+        // Safety (although no unsafe is required):
         // - `ArcInner` is properly allocated and initialized.
         //   - `()` and `[MaybeUninit<T>]` do not require special initialization
         // - The `Arc` is just created and so -- unique.
-        unsafe {
-            let arc: Arc<HeaderSlice<(), [MaybeUninit<T>]>> = Arc::from_raw_inner(ptr.as_ptr());
-            let arc: Arc<[MaybeUninit<T>]> = arc.into();
-            UniqueArc(arc)
-        }
+        let arc: Arc<HeaderSlice<(), [MaybeUninit<T>]>> =
+            UniqueArc::from_header_and_uninit_slice((), len).0;
+        let arc: Arc<[MaybeUninit<T>]> = arc.into();
+        UniqueArc(arc)
     }
 
     /// # Safety
@@ -180,6 +176,38 @@ impl<T> UniqueArc<[MaybeUninit<T>]> {
     #[inline]
     pub unsafe fn assume_init_slice(Self(this): Self) -> UniqueArc<[T]> {
         UniqueArc(this.assume_init())
+    }
+}
+
+impl<H, T> UniqueArc<HeaderSlice<H, [MaybeUninit<T>]>> {
+    /// Creates an Arc for a HeaderSlice using the given header struct and allocated space
+    /// for an unitialized slice of length `len`.
+    #[inline]
+    pub fn from_header_and_uninit_slice(header: H, len: usize) -> Self {
+        let inner = Arc::<HeaderSlice<H, [MaybeUninit<T>]>>::allocate_for_header_and_slice(len);
+
+        unsafe {
+            // Safety: inner is a valid pointer, so this can't go out of bounds
+            let dst = addr_of_mut!((*inner.as_ptr()).data.header);
+
+            // Safety: `dst` is valid for writes (just allocated)
+            ptr::write(dst, header);
+        }
+
+        // Safety: ptr is valid & the inner structure is initialized.
+        // We wrote the header above and the slice can stay unitialized as it's [MaybeUninit<T>]
+        Self(Arc {
+            p: inner,
+            phantom: PhantomData,
+        })
+    }
+
+    /// # Safety
+    ///
+    /// Must initialize all fields before calling this function.
+    #[inline]
+    pub unsafe fn assume_init_slice_with_header(self) -> UniqueArc<HeaderSlice<H, [T]>> {
+        unsafe { core::mem::transmute(self) }
     }
 }
 
@@ -248,7 +276,7 @@ unsafe impl<T, U: ?Sized> unsize::CoerciblePtr<U> for UniqueArc<T> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{Arc, UniqueArc};
+    use crate::{Arc, HeaderSliceWithLength, HeaderWithLength, UniqueArc};
     use core::{convert::TryFrom, mem::MaybeUninit};
 
     #[test]
@@ -277,5 +305,39 @@ mod tests {
 
         let arc = unsafe { UniqueArc::assume_init(arc) };
         assert_eq!(*arc, 999);
+    }
+
+    #[test]
+    fn from_header_and_uninit_slice() {
+        let mut uarc: UniqueArc<HeaderSliceWithLength<u8, [MaybeUninit<u16>]>> =
+            UniqueArc::from_header_and_uninit_slice(HeaderWithLength::new(1, 3), 3);
+        uarc.slice.fill(MaybeUninit::new(2));
+        let arc = unsafe { uarc.assume_init_slice_with_header() }.shareable();
+        assert!(arc.is_unique());
+        // Using clone to that the layout generated in new_uninit_slice is compatible
+        // with ArcInner.
+        let arcs = [
+            arc.clone(),
+            arc.clone(),
+            arc.clone(),
+            arc.clone(),
+            arc.clone(),
+        ];
+        // Similar for ThinArc
+        let thin = Arc::into_thin(arc.clone());
+        assert_eq!(7, Arc::count(&arc));
+        // If the layout is not compatible, then the data might be corrupted.
+        assert_eq!(arc.header.header, 1);
+        assert_eq!(&arc.slice, [2, 2, 2]);
+        assert_eq!(thin.header.header, 1);
+        assert_eq!(&thin.slice, [2, 2, 2]);
+
+        // Drop the arcs and check the count and the content to
+        // make sure it isn't corrupted.
+        drop(arcs);
+        drop(thin);
+        assert!(arc.is_unique());
+        assert_eq!(arc.header.header, 1);
+        assert_eq!(&arc.slice, [2, 2, 2]);
     }
 }
