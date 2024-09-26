@@ -5,7 +5,7 @@ use core::iter::FromIterator;
 use core::marker::PhantomData;
 use core::mem::{ManuallyDrop, MaybeUninit};
 use core::ops::{Deref, DerefMut};
-use core::ptr::{self, NonNull};
+use core::ptr::{self, addr_of_mut, NonNull};
 use core::sync::atomic::AtomicUsize;
 
 use crate::iterator_as_exact_size_iterator::IteratorAsExactSizeIterator;
@@ -160,18 +160,14 @@ impl<T> UniqueArc<MaybeUninit<T>> {
 impl<T> UniqueArc<[MaybeUninit<T>]> {
     /// Create an Arc contains an array `[MaybeUninit<T>]` of `len`.
     pub fn new_uninit_slice(len: usize) -> Self {
-        let ptr: NonNull<ArcInner<HeaderSlice<(), [MaybeUninit<T>]>>> =
-            Arc::allocate_for_header_and_slice(len);
-
-        // Safety:
+        // Safety (although no unsafe is required):
         // - `ArcInner` is properly allocated and initialized.
         //   - `()` and `[MaybeUninit<T>]` do not require special initialization
         // - The `Arc` is just created and so -- unique.
-        unsafe {
-            let arc: Arc<HeaderSlice<(), [MaybeUninit<T>]>> = Arc::from_raw_inner(ptr.as_ptr());
-            let arc: Arc<[MaybeUninit<T>]> = arc.into();
-            UniqueArc(arc)
-        }
+        let arc: Arc<HeaderSlice<(), [MaybeUninit<T>]>> =
+            UniqueArc::from_header_and_uninit_slice((), len).0;
+        let arc: Arc<[MaybeUninit<T>]> = arc.into();
+        UniqueArc(arc)
     }
 
     /// # Safety
@@ -186,15 +182,20 @@ impl<T> UniqueArc<[MaybeUninit<T>]> {
 impl<H, T> UniqueArc<HeaderSlice<H, [MaybeUninit<T>]>> {
     /// Creates an Arc for a HeaderSlice using the given header struct and allocated space
     /// for an unitialized slice of length `len`.
+    #[inline]
     pub fn from_header_and_uninit_slice(header: H, len: usize) -> Self {
-        let inner = Arc::allocate_for_header_and_slice(len);
+        let inner = Arc::<HeaderSlice<H, [MaybeUninit<T>]>>::allocate_for_header_and_slice(len);
 
         unsafe {
-            // Write the header.
-            ptr::write(&mut ((*inner.as_ptr()).data.header), header);
+            // Safety: inner is a valid pointer, so this can't go out of bounds
+            let dst = addr_of_mut!((*inner.as_ptr()).data.header);
+
+            // Safety: `dst` is valid for writes (just allocated)
+            ptr::write(dst, header);
         }
 
-        // Safety: ptr is valid & the inner structure is fully initialized
+        // Safety: ptr is valid & the inner structure is initialized.
+        // We wrote the header above and the slice can stay unitialized as it's [MaybeUninit<T>]
         Self(Arc {
             p: inner,
             phantom: PhantomData,
