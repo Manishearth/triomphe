@@ -203,9 +203,7 @@ impl From<String> for Arc<str> {
     }
 }
 
-// FIXME: once `pointer::with_metadata_of` is stable or
-//        implementable on stable without assuming ptr layout
-//        this will be able to accept `T: ?Sized`.
+#[cfg(not(feature = "unstable"))]
 impl<T> From<Box<T>> for Arc<T> {
     fn from(b: Box<T>) -> Self {
         let layout = Layout::for_value::<T>(&b);
@@ -236,6 +234,43 @@ impl<T> From<Box<T>> for Arc<T> {
         Arc {
             p: inner,
             phantom: PhantomData,
+        }
+    }
+}
+
+#[cfg(feature = "unstable")]
+impl<T: ?Sized> From<Box<T>> for Arc<T> {
+    fn from(b: Box<T>) -> Self {
+        let src = Box::into_raw(b);
+        unsafe {
+            // Safety: `src` is a valid pointer
+            let layout = Layout::for_value_raw(src);
+
+            // Safety: the closure only changes the type of the pointer
+            let inner = Self::allocate_for_layout(layout, |mem| {
+                mem.with_metadata_of(src as *const ArcInner<T>) as *mut ArcInner<T>
+            });
+
+            // Safety: inner is a valid pointer, so this can't go out of bounds
+            let dst = addr_of_mut!((*inner.as_ptr()).data);
+
+            // Safety:
+            // - `src` is valid for reads (got from `Box`)
+            // - `dst` is valid for writes (just allocated)
+            // - `src` and `dst` don't overlap (separate allocations)
+            ptr::copy_nonoverlapping(src as *const u8, dst as *mut u8, layout.size());
+
+            // Deallocate box without dropping `T`
+            //
+            // Safety:
+            // - `src` has been got from `Box::into_raw`
+            // - `ManuallyDrop<T>` is guaranteed to have the same layout as `T`
+            drop(Box::<ManuallyDrop<T>>::from_raw(src as _));
+
+            Arc {
+                p: inner,
+                phantom: PhantomData,
+            }
         }
     }
 }
@@ -381,6 +416,14 @@ mod tests {
             &*v,
             [String::from("1"), String::from("2"), String::from("3")]
         );
+    }
+
+    #[cfg(feature = "unstable")]
+    #[test]
+    fn from_dyn_box() {
+        let b = String::from("xxx").into_boxed_str();
+        let b = Arc::<str>::from(b);
+        assert_eq!(&*b, "xxx");
     }
 
     /// It’s possible to make a generic `Arc` wrapper that supports both:
