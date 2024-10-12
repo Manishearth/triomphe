@@ -7,7 +7,6 @@ use core::iter::{ExactSizeIterator, Iterator};
 use core::marker::PhantomData;
 use core::mem::{self, ManuallyDrop};
 use core::ptr::{self, addr_of_mut};
-use core::usize;
 
 use super::{Arc, ArcInner};
 
@@ -344,7 +343,6 @@ mod tests {
         );
 
         let empty = Arc::from_header_and_str((), "");
-        assert_eq!(empty.header, ());
         assert_eq!(&empty.slice, "");
     }
 
@@ -358,7 +356,6 @@ mod tests {
         let c: Arc<HeaderSlice<(), [u32]>> = b.into();
 
         assert_eq!(&c.slice, [12, 17, 16]);
-        assert_eq!(c.header, ());
     }
 
     #[test]
