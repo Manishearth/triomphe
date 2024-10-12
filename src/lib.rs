@@ -20,6 +20,7 @@
 
 #![allow(missing_docs)]
 #![cfg_attr(not(feature = "std"), no_std)]
+#![cfg_attr(feature = "unstable_dropck_eyepatch", feature(dropck_eyepatch))]
 
 extern crate alloc;
 #[cfg(feature = "std")]

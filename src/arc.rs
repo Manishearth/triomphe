@@ -624,11 +624,8 @@ impl<T: ?Sized> Arc<T> {
             Err(this)
         }
     }
-}
 
-impl<T: ?Sized> Drop for Arc<T> {
-    #[inline]
-    fn drop(&mut self) {
+    fn drop_inner(&mut self) {
         // Because `fetch_sub` is already atomic, we do not need to synchronize
         // with other threads unless we are going to delete the object.
         if self.inner().count.fetch_sub(1, Release) != 1 {
@@ -660,6 +657,23 @@ impl<T: ?Sized> Drop for Arc<T> {
         unsafe {
             self.drop_slow();
         }
+    }
+}
+
+#[cfg(not(feature = "unstable_dropck_eyepatch"))]
+impl<T: ?Sized> Drop for Arc<T> {
+    #[inline]
+    fn drop(&mut self) {
+        self.drop_inner();
+    }
+}
+
+// SAFETY: We do not access the inner `T`, so we are fine to drop Arc with an already dropped T.
+#[cfg(feature = "unstable_dropck_eyepatch")]
+unsafe impl<#[may_dangle] T: ?Sized> Drop for Arc<T> {
+    #[inline]
+    fn drop(&mut self) {
+        self.drop_inner();
     }
 }
 
