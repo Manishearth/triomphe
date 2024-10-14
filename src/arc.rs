@@ -893,7 +893,7 @@ mod tests {
         uninit.write(String::from("nonononono"));
 
         // Read invalidated reference to trigger UB
-        let _ = *x;
+        let _read = &*x;
     }
 
     #[test]
@@ -909,7 +909,7 @@ mod tests {
         uninit.as_mut_slice()[0].write(String::from("nonononono"));
 
         // Read invalidated reference to trigger UB
-        let _ = *x;
+        let _read = &*x;
     }
 
     #[test]
