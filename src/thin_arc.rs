@@ -7,7 +7,6 @@ use core::marker::PhantomData;
 use core::mem::ManuallyDrop;
 use core::ops::Deref;
 use core::ptr;
-use core::usize;
 
 use super::{Arc, ArcInner, HeaderSliceWithLength, HeaderWithLength};
 
@@ -167,7 +166,7 @@ impl<H, T> ThinArc<H, T> {
     /// however `triomphe::Arc` does not support weak references.
     #[inline]
     pub fn strong_count(this: &Self) -> usize {
-        Self::with_arc(this, |arc| Arc::strong_count(arc))
+        Self::with_arc(this, Arc::strong_count)
     }
 }
 
@@ -485,7 +484,7 @@ mod tests {
             arc.clone(),
             arc.clone(),
         ];
-        arc.with_arc(|arc| assert_eq!(6, Arc::count(&arc)));
+        arc.with_arc(|arc| assert_eq!(6, Arc::count(arc)));
 
         // If the layout is not compatible, then the data might be corrupted.
         assert_eq!(arc.header.header, 1);

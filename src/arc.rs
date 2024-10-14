@@ -14,7 +14,6 @@ use core::ops::Deref;
 use core::ptr::{self, NonNull};
 use core::sync::atomic;
 use core::sync::atomic::Ordering::{Acquire, Relaxed, Release};
-use core::{isize, usize};
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -888,13 +887,13 @@ mod tests {
         let mut uninit = Arc::new_uninit();
         let clone = uninit.clone();
 
-        let x: &MaybeUninit<String> = &*clone;
+        let x: &MaybeUninit<String> = &clone;
 
         // This write invalidates `x` reference
         uninit.write(String::from("nonononono"));
 
         // Read invalidated reference to trigger UB
-        let _ = &*x;
+        let _ = *x;
     }
 
     #[test]
@@ -904,13 +903,13 @@ mod tests {
         let mut uninit = Arc::new_uninit_slice(13);
         let clone = uninit.clone();
 
-        let x: &[MaybeUninit<String>] = &*clone;
+        let x: &[MaybeUninit<String>] = &clone;
 
         // This write invalidates `x` reference
         uninit.as_mut_slice()[0].write(String::from("nonononono"));
 
         // Read invalidated reference to trigger UB
-        let _ = &*x;
+        let _ = *x;
     }
 
     #[test]

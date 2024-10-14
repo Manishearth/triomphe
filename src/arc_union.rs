@@ -1,7 +1,6 @@
 use core::fmt;
 use core::marker::PhantomData;
 use core::ptr;
-use core::usize;
 
 use super::{Arc, ArcBorrow};
 
