@@ -8,6 +8,9 @@ use core::ops::{Deref, DerefMut};
 use core::ptr::{self, addr_of_mut, NonNull};
 use core::sync::atomic::AtomicUsize;
 
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+
 use crate::iterator_as_exact_size_iterator::IteratorAsExactSizeIterator;
 use crate::HeaderSlice;
 
@@ -271,6 +274,26 @@ unsafe impl<T, U: ?Sized> unsize::CoerciblePtr<U> for UniqueArc<T> {
         // Dispatch to the contained field, work around conflict of destructuring and Drop.
         let inner = ManuallyDrop::new(self);
         UniqueArc(ptr::read(&inner.0).replace_ptr(new))
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de, T: Deserialize<'de>> Deserialize<'de> for UniqueArc<T> {
+    fn deserialize<D>(deserializer: D) -> Result<UniqueArc<T>, D::Error>
+    where
+        D: ::serde::de::Deserializer<'de>,
+    {
+        T::deserialize(deserializer).map(UniqueArc::new)
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<T: Serialize> Serialize for UniqueArc<T> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: ::serde::ser::Serializer,
+    {
+        (**self).serialize(serializer)
     }
 }
 
