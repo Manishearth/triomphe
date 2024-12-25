@@ -245,17 +245,64 @@ impl<T> From<Vec<T>> for Arc<[T]> {
     }
 }
 
-pub(crate) type HeaderSliceWithLength<H, T> = HeaderSlice<HeaderWithLength<H>, T>;
+/// A type wrapping `HeaderSlice<HeaderWithLength<H>, T>` that is used internally in `ThinArc`.
+///
+/// # Safety
+///
+/// Safety-usable invariants:
+///
+/// - This is guaranteed to have the same representation as `HeaderSlice<HeaderWithLength<H>, T>` (i.e. `HeaderSliceWithLengthUnchecked`)
+/// - For `T` that is  `[U]` or `str`, the header length (`.length()` is checked to be the slice length)
+#[derive(Debug, Hash, Eq, PartialEq)]
+#[repr(transparent)]
+pub struct HeaderSliceWithLengthChecked<H, T: ?Sized> {
+    // Invariant: if T is [U] or str, then the header's length field must be the slice length
+    // Currently no other DSTs are used with this type amd it has no invariants, but these may be added in the future
+    inner: HeaderSliceWithLengthUnchecked<H, T>,
+}
 
-impl<H: PartialOrd, T: ?Sized + PartialOrd> PartialOrd for HeaderSliceWithLength<H, T> {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        (&self.header.header, &self.slice).partial_cmp(&(&other.header.header, &other.slice))
+pub type HeaderSliceWithLengthUnchecked<H, T> = HeaderSlice<HeaderWithLength<H>, T>;
+
+// Backcompat alias for `HeaderSliceWithLengthUnchecked`
+#[deprecated = "Move to HeaderSliceWithLengthUnchecked"]
+pub type HeaderSliceWithLength<H, T> = HeaderSliceWithLengthUnchecked<H, T>;
+
+impl<H, T: ?Sized> HeaderSliceWithLengthChecked<H, T> {
+    pub fn header(&self) -> &H {
+        &self.inner.header.header
+    }
+    pub fn header_mut(&self) -> &mut H {
+        // Safety: only the length is unsafe to mutate
+        &mut self.inner.header.header
+    }
+    pub fn length(&self) -> usize {
+        self.inner.header.length
+    }
+
+    pub fn slice(&self) -> &T {
+        &self.inner.slice
+    }
+    pub fn slice_mut(&mut self) -> &mut T {
+        // Safety: only the length is unsafe to mutate
+        &mut self.inner.slice
+    }
+    pub(crate) fn inner(&self) -> &HeaderSliceWithLengthUnchecked<H, T> {
+        // This is safe in an immutable context
+        &self.inner
     }
 }
 
-impl<H: Ord, T: ?Sized + Ord> Ord for HeaderSliceWithLength<H, T> {
+impl<H: PartialOrd, T: ?Sized + PartialOrd> PartialOrd for HeaderSliceWithLengthChecked<H, T> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        (&self.inner.header.header, &self.inner.slice)
+            .partial_cmp(&(&other.inner.header.header, &other.inner.slice))
+    }
+}
+
+impl<H: Ord, T: ?Sized + Ord> Ord for HeaderSliceWithLengthChecked<H, T> {
     fn cmp(&self, other: &Self) -> Ordering {
-        (&self.header.header, &self.slice).cmp(&(&other.header.header, &other.slice))
+        (&self.inner.header.header, &self.inner.slice)
+            .cmp(&(&other.inner.header.header, &other.inner.slice))
     }
 }
 
