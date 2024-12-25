@@ -107,7 +107,11 @@ impl<H, T> ThinArc<H, T> {
 
         // Expose the transient Arc to the callback, which may clone it if it wants
         // and forward the result to the user
-        f(&mut transient)
+        let ret = f(&mut transient);
+        // It is possible for the user to replace the Arc entirely here. If so, we need to update the ThinArc as well
+        // Safety: We're still in the realm of Protected types so this cast is safe
+        self.ptr = transient.p.cast();
+        ret
     }
 
     /// Creates a `ThinArc` for a HeaderSlice using the given header struct and
