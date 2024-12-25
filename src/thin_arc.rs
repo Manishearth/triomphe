@@ -237,9 +237,6 @@ impl<H, T> Arc<HeaderSliceWithLengthUnchecked<H, [T]>> {
 
     /// Converts an `Arc` into a `ThinArc`. This consumes the `Arc`, so the refcount
     /// is not modified.
-    ///
-    /// # Safety
-    /// Assumes that the header length matches the slice length.
     #[inline]
     fn from_checked_header(a: Arc<HeaderSliceWithLengthChecked<H, [T]>>) -> Self {
         // Safety: HeaderSliceWithLengthChecked and HeaderSliceWithLengthUnchecked have the same layout
