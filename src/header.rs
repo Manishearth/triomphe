@@ -263,10 +263,6 @@ pub struct HeaderSliceWithLengthChecked<H, T: ?Sized> {
 
 pub type HeaderSliceWithLengthUnchecked<H, T> = HeaderSlice<HeaderWithLength<H>, T>;
 
-// Backcompat alias for `HeaderSliceWithLengthUnchecked`
-#[deprecated = "Move to HeaderSliceWithLengthUnchecked"]
-pub type HeaderSliceWithLength<H, T> = HeaderSliceWithLengthUnchecked<H, T>;
-
 impl<H, T: ?Sized> HeaderSliceWithLengthChecked<H, T> {
     pub fn header(&self) -> &H {
         &self.inner.header.header
