@@ -9,7 +9,7 @@ use core::mem::ManuallyDrop;
 use core::ops::Deref;
 use core::ptr;
 
-use super::{Arc, ArcInner, HeaderSliceWithLengthChecked, HeaderWithLength};
+use super::{Arc, ArcInner, HeaderSliceWithLengthProtected, HeaderWithLength};
 use crate::header::HeaderSliceWithLengthUnchecked;
 
 /// A "thin" `Arc` containing dynamically sized data
@@ -26,10 +26,10 @@ use crate::header::HeaderSliceWithLengthUnchecked;
 /// Note that we use `[T; 0]` in order to have the right alignment for `T`.
 ///
 /// `ThinArc` solves this by storing the length in the allocation itself,
-/// via `HeaderSliceWithLengthChecked`.
+/// via `HeaderSliceWithLengthProtected`.
 #[repr(transparent)]
 pub struct ThinArc<H, T> {
-    ptr: ptr::NonNull<ArcInner<HeaderSliceWithLengthChecked<H, [T; 0]>>>,
+    ptr: ptr::NonNull<ArcInner<HeaderSliceWithLengthProtected<H, [T; 0]>>>,
     phantom: PhantomData<(H, T)>,
 }
 
@@ -41,12 +41,12 @@ unsafe impl<H: Sync + Send, T: Sync + Send> Sync for ThinArc<H, T> {}
 // See the comment around the analogous operation in from_header_and_iter.
 #[inline]
 fn thin_to_thick<H, T>(
-    thin: *mut ArcInner<HeaderSliceWithLengthChecked<H, [T; 0]>>,
-) -> *mut ArcInner<HeaderSliceWithLengthChecked<H, [T]>> {
+    thin: *mut ArcInner<HeaderSliceWithLengthProtected<H, [T; 0]>>,
+) -> *mut ArcInner<HeaderSliceWithLengthProtected<H, [T]>> {
     let len = unsafe { (*thin).data.length() };
     let fake_slice = ptr::slice_from_raw_parts_mut(thin as *mut T, len);
 
-    fake_slice as *mut ArcInner<HeaderSliceWithLengthChecked<H, [T]>>
+    fake_slice as *mut ArcInner<HeaderSliceWithLengthProtected<H, [T]>>
 }
 
 impl<H, T> ThinArc<H, T> {
@@ -55,7 +55,27 @@ impl<H, T> ThinArc<H, T> {
     #[inline]
     pub fn with_arc<F, U>(&self, f: F) -> U
     where
-        F: FnOnce(&Arc<HeaderSliceWithLengthChecked<H, [T]>>) -> U,
+        F: FnOnce(&Arc<HeaderSliceWithLengthUnchecked<H, [T]>>) -> U,
+    {
+        // Synthesize transient Arc, which never touches the refcount of the ArcInner.
+        let transient = unsafe {
+            ManuallyDrop::new(Arc::from_protected(Arc {
+                p: ptr::NonNull::new_unchecked(thin_to_thick(self.ptr.as_ptr())),
+                phantom: PhantomData,
+            }))
+        };
+
+        // Expose the transient Arc to the callback, which may clone it if it wants
+        // and forward the result to the user
+        f(&transient)
+    }
+
+    /// Temporarily converts |self| into a bonafide Arc and exposes it to the
+    /// provided callback. The refcount is not modified.
+    #[inline]
+    fn with_protected_arc<F, U>(&self, f: F) -> U
+    where
+        F: FnOnce(&Arc<HeaderSliceWithLengthProtected<H, [T]>>) -> U,
     {
         // Synthesize transient Arc, which never touches the refcount of the ArcInner.
         let transient = unsafe {
@@ -75,7 +95,7 @@ impl<H, T> ThinArc<H, T> {
     #[inline]
     pub fn with_arc_mut<F, U>(&mut self, f: F) -> U
     where
-        F: FnOnce(&mut Arc<HeaderSliceWithLengthChecked<H, [T]>>) -> U,
+        F: FnOnce(&mut Arc<HeaderSliceWithLengthProtected<H, [T]>>) -> U,
     {
         // Synthesize transient Arc, which never touches the refcount of the ArcInner.
         let mut transient = unsafe {
@@ -184,7 +204,7 @@ impl<H, T> Deref for ThinArc<H, T> {
 impl<H, T> Clone for ThinArc<H, T> {
     #[inline]
     fn clone(&self) -> Self {
-        ThinArc::with_arc(self, |a| Arc::checked_header_into_thin(a.clone()))
+        ThinArc::with_protected_arc(self, |a| Arc::protected_into_thin(a.clone()))
     }
 }
 
@@ -207,10 +227,10 @@ impl<H, T> Arc<HeaderSliceWithLengthUnchecked<H, [T]>> {
     #[inline]
     unsafe fn into_thin_unchecked(a: Self) -> ThinArc<H, T> {
         // Safety: invariant bubbled up
-        let this_checked: Arc<HeaderSliceWithLengthChecked<H, [T]>> =
-            unsafe { Arc::from_unchecked_header(a) };
+        let this_protected: Arc<HeaderSliceWithLengthProtected<H, [T]>> =
+            unsafe { Arc::from_unprotected_unchecked(a) };
 
-        Arc::checked_header_into_thin(this_checked)
+        Arc::protected_into_thin(this_protected)
     }
 
     /// Converts an `Arc` into a `ThinArc`. This consumes the `Arc`, so the refcount
@@ -230,25 +250,23 @@ impl<H, T> Arc<HeaderSliceWithLengthUnchecked<H, [T]>> {
     /// is not modified.
     #[inline]
     pub fn from_thin(a: ThinArc<H, T>) -> Self {
-        Self::from_checked_header(
-            Arc::<HeaderSliceWithLengthChecked<H, [T]>>::checked_header_from_thin(a),
-        )
+        Self::from_protected(Arc::<HeaderSliceWithLengthProtected<H, [T]>>::protected_from_thin(a))
     }
 
     /// Converts an `Arc` into a `ThinArc`. This consumes the `Arc`, so the refcount
     /// is not modified.
     #[inline]
-    fn from_checked_header(a: Arc<HeaderSliceWithLengthChecked<H, [T]>>) -> Self {
-        // Safety: HeaderSliceWithLengthChecked and HeaderSliceWithLengthUnchecked have the same layout
+    fn from_protected(a: Arc<HeaderSliceWithLengthProtected<H, [T]>>) -> Self {
+        // Safety: HeaderSliceWithLengthProtected and HeaderSliceWithLengthUnchecked have the same layout
         unsafe { mem::transmute(a) }
     }
 }
 
-impl<H, T> Arc<HeaderSliceWithLengthChecked<H, [T]>> {
+impl<H, T> Arc<HeaderSliceWithLengthProtected<H, [T]>> {
     /// Converts an `Arc` into a `ThinArc`. This consumes the `Arc`, so the refcount
     /// is not modified.
     #[inline]
-    pub fn checked_header_into_thin(a: Self) -> ThinArc<H, T> {
+    pub fn protected_into_thin(a: Self) -> ThinArc<H, T> {
         debug_assert_eq!(
             a.length(),
             a.slice().len(),
@@ -256,13 +274,13 @@ impl<H, T> Arc<HeaderSliceWithLengthChecked<H, [T]>> {
         );
 
         let a = ManuallyDrop::new(a);
-        let fat_ptr: *mut ArcInner<HeaderSliceWithLengthChecked<H, [T]>> = a.ptr();
+        let fat_ptr: *mut ArcInner<HeaderSliceWithLengthProtected<H, [T]>> = a.ptr();
         let thin_ptr = fat_ptr as *mut [usize] as *mut usize;
         ThinArc {
-            // Safety: The pointer comes from a valid Arc, and HeaderSliceWithLengthChecked has the correct length invariant
+            // Safety: The pointer comes from a valid Arc, and HeaderSliceWithLengthProtected has the correct length invariant
             ptr: unsafe {
                 ptr::NonNull::new_unchecked(
-                    thin_ptr as *mut ArcInner<HeaderSliceWithLengthChecked<H, [T; 0]>>,
+                    thin_ptr as *mut ArcInner<HeaderSliceWithLengthProtected<H, [T; 0]>>,
                 )
             },
             phantom: PhantomData,
@@ -272,7 +290,7 @@ impl<H, T> Arc<HeaderSliceWithLengthChecked<H, [T]>> {
     /// Converts a `ThinArc` into an `Arc`. This consumes the `ThinArc`, so the refcount
     /// is not modified.
     #[inline]
-    pub fn checked_header_from_thin(a: ThinArc<H, T>) -> Self {
+    pub fn protected_from_thin(a: ThinArc<H, T>) -> Self {
         let a = ManuallyDrop::new(a);
         let ptr = thin_to_thick(a.ptr.as_ptr());
         unsafe {
@@ -283,14 +301,14 @@ impl<H, T> Arc<HeaderSliceWithLengthChecked<H, [T]>> {
         }
     }
 
-    /// Obtains a HeaderSliceWithLengthChecked from an unchecked HeaderSliceWithLengthUnchecked, wrapped in an Arc
+    /// Obtains a HeaderSliceWithLengthProtected from an unchecked HeaderSliceWithLengthUnchecked, wrapped in an Arc
     ///
     /// # Safety
     /// Assumes that the header length matches the slice length.
     #[inline]
-    unsafe fn from_unchecked_header(a: Arc<HeaderSliceWithLengthUnchecked<H, [T]>>) -> Self {
-        // Safety: HeaderSliceWithLengthChecked and HeaderSliceWithLengthUnchecked have the same layout
-        // and the safety invariant on HeaderSliceWithLengthChecked.inner is bubbled up
+    unsafe fn from_unprotected_unchecked(a: Arc<HeaderSliceWithLengthUnchecked<H, [T]>>) -> Self {
+        // Safety: HeaderSliceWithLengthProtected and HeaderSliceWithLengthUnchecked have the same layout
+        // and the safety invariant on HeaderSliceWithLengthProtected.inner is bubbled up
         unsafe { mem::transmute(a) }
     }
 }
