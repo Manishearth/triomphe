@@ -97,20 +97,37 @@ impl<H, T> ThinArc<H, T> {
     where
         F: FnOnce(&mut Arc<HeaderSliceWithLengthProtected<H, [T]>>) -> U,
     {
+        // It is possible for the user to replace the Arc entirely here. If so, we need to update the ThinArc as well
+        // whenever this method exits. We do this with a drop guard to handle the panicking case
+        struct DropGuard<'a, H, T> {
+            transient: ManuallyDrop<Arc<HeaderSliceWithLengthProtected<H, [T]>>>,
+            this: &'a mut ThinArc<H, T>,
+        }
+
+        impl<'a, H, T> Drop for DropGuard<'a, H, T> {
+            fn drop(&mut self) {
+                // Safety: We're still in the realm of Protected types so this cast is safe
+                self.this.ptr = self.transient.p.cast();
+            }
+        }
+
         // Synthesize transient Arc, which never touches the refcount of the ArcInner.
-        let mut transient = unsafe {
+        let transient = unsafe {
             ManuallyDrop::new(Arc {
                 p: ptr::NonNull::new_unchecked(thin_to_thick(self.ptr.as_ptr())),
                 phantom: PhantomData,
             })
         };
 
+        let mut guard = DropGuard {
+            transient,
+            this: self,
+        };
+
         // Expose the transient Arc to the callback, which may clone it if it wants
         // and forward the result to the user
-        let ret = f(&mut transient);
-        // It is possible for the user to replace the Arc entirely here. If so, we need to update the ThinArc as well
-        // Safety: We're still in the realm of Protected types so this cast is safe
-        self.ptr = transient.p.cast();
+        let ret = f(&mut guard.transient);
+
         ret
     }
 
