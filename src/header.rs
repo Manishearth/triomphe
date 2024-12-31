@@ -256,8 +256,7 @@ impl<T> From<Vec<T>> for Arc<[T]> {
 #[derive(Debug, Hash, Eq, PartialEq, Ord, PartialOrd)]
 #[repr(transparent)]
 pub struct HeaderSliceWithLengthProtected<H, T> {
-    // Invariant: if T is [U] or str, then the header's length field must be the slice length
-    // Currently no other DSTs are used with this type amd it has no invariants, but these may be added in the future
+    // Invariant: the header's length field must be the slice length
     inner: HeaderSliceWithLengthUnchecked<H, T>,
 }
 
