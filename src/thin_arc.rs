@@ -157,7 +157,7 @@ impl<H, T> ThinArc<H, T> {
     /// within it -- for memory reporting.
     #[inline]
     pub fn ptr(&self) -> *const c_void {
-        self.ptr.as_ptr() as *const ArcInner<T> as *const c_void
+        self.ptr.cast().as_ptr()
     }
 
     /// Returns the address on the heap of the Arc itself -- not the T within it -- for memory
@@ -190,7 +190,7 @@ impl<H, T> ThinArc<H, T> {
     #[inline]
     pub fn into_raw(self) -> *const c_void {
         let this = ManuallyDrop::new(self);
-        this.ptr.cast().as_ptr()
+        this.ptr()
     }
 
     /// Provides a raw pointer to the data.
