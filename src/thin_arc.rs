@@ -96,6 +96,16 @@ impl<H, T> ThinArc<H, T> {
 
         impl<'a, H, T> Drop for DropGuard<'a, H, T> {
             fn drop(&mut self) {
+                // This guard is only dropped when the same debug_assert already succeeded
+                // or while panicking. This has the effect that, if the debug_assert fails, we abort!
+                // This should never fail, unless a user used `transmute` to violate the invariants of
+                // `HeaderSliceWithLengthProtected`.
+                // In this case, there is no sound fallback other than aborting.
+                debug_assert_eq!(
+                    self.transient.length(),
+                    self.transient.slice().len(),
+                    "Length needs to be correct for ThinArc to work"
+                );
                 // Safety: We're still in the realm of Protected types so this cast is safe
                 self.this.ptr = self.transient.p.cast();
             }
@@ -112,6 +122,13 @@ impl<H, T> ThinArc<H, T> {
         // Expose the transient Arc to the callback, which may clone it if it wants
         // and forward the result to the user
         let ret = f(&mut guard.transient);
+
+        // deliberately checked both here AND in the `DropGuard`
+        debug_assert_eq!(
+            guard.transient.length(),
+            guard.transient.slice().len(),
+            "Length needs to be correct for ThinArc to work"
+        );
 
         ret
     }
