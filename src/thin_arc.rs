@@ -279,7 +279,7 @@ impl<H, T> Arc<HeaderSliceWithLengthUnchecked<H, T>> {
     #[inline]
     fn from_protected(a: Arc<HeaderSliceWithLengthProtected<H, T>>) -> Self {
         // Safety: HeaderSliceWithLengthProtected and HeaderSliceWithLengthUnchecked have the same layout
-        unsafe { mem::transmute(a) }
+        unsafe { Arc::from_raw_inner(Arc::into_raw_inner(a) as _) }
     }
 }
 
@@ -294,16 +294,11 @@ impl<H, T> Arc<HeaderSliceWithLengthProtected<H, T>> {
             "Length needs to be correct for ThinArc to work"
         );
 
-        let a = ManuallyDrop::new(a);
-        let fat_ptr: *mut ArcInner<HeaderSliceWithLengthProtected<H, T>> = a.ptr();
-        let thin_ptr = fat_ptr as *mut [usize] as *mut usize;
+        let fat_ptr: *mut ArcInner<HeaderSliceWithLengthProtected<H, T>> = Arc::into_raw_inner(a);
+        // Safety: The pointer comes from a valid Arc, and HeaderSliceWithLengthProtected has the correct length invariant
+        let thin_ptr: *mut ArcInner<HeaderSlice<HeaderWithLength<H>, [T; 0]>> = fat_ptr.cast();
         ThinArc {
-            // Safety: The pointer comes from a valid Arc, and HeaderSliceWithLengthProtected has the correct length invariant
-            ptr: unsafe {
-                ptr::NonNull::new_unchecked(
-                    thin_ptr as *mut ArcInner<HeaderSlice<HeaderWithLength<H>, [T; 0]>>,
-                )
-            },
+            ptr: unsafe { ptr::NonNull::new_unchecked(thin_ptr) },
             phantom: PhantomData,
         }
     }
@@ -314,12 +309,7 @@ impl<H, T> Arc<HeaderSliceWithLengthProtected<H, T>> {
     pub fn protected_from_thin(a: ThinArc<H, T>) -> Self {
         let a = ManuallyDrop::new(a);
         let ptr = thin_to_thick(a.ptr.as_ptr());
-        unsafe {
-            Arc {
-                p: ptr::NonNull::new_unchecked(ptr),
-                phantom: PhantomData,
-            }
-        }
+        unsafe { Arc::from_raw_inner(ptr) }
     }
 
     /// Obtains a HeaderSliceWithLengthProtected from an unchecked HeaderSliceWithLengthUnchecked, wrapped in an Arc
@@ -330,7 +320,7 @@ impl<H, T> Arc<HeaderSliceWithLengthProtected<H, T>> {
     unsafe fn from_unprotected_unchecked(a: Arc<HeaderSliceWithLengthUnchecked<H, T>>) -> Self {
         // Safety: HeaderSliceWithLengthProtected and HeaderSliceWithLengthUnchecked have the same layout
         // and the safety invariant on HeaderSliceWithLengthProtected.inner is bubbled up
-        unsafe { mem::transmute(a) }
+        unsafe { Arc::from_raw_inner(Arc::into_raw_inner(a) as _) }
     }
 }
 
