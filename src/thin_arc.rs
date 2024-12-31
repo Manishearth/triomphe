@@ -4,7 +4,6 @@ use core::fmt;
 use core::hash::{Hash, Hasher};
 use core::iter::{ExactSizeIterator, Iterator};
 use core::marker::PhantomData;
-use core::mem;
 use core::mem::ManuallyDrop;
 use core::ops::Deref;
 use core::ptr;
@@ -40,9 +39,8 @@ unsafe impl<H: Sync + Send, T: Sync + Send> Sync for ThinArc<H, T> {}
 //
 // See the comment around the analogous operation in from_header_and_iter.
 #[inline]
-fn thin_to_thick<H, T>(
-    thin: *mut ArcInner<HeaderSlice<HeaderWithLength<H>, [T; 0]>>,
-) -> *mut ArcInner<HeaderSliceWithLengthProtected<H, T>> {
+fn thin_to_thick<H, T>(arc: &ThinArc<H, T>) -> *mut ArcInner<HeaderSliceWithLengthProtected<H, T>> {
+    let thin = arc.ptr.as_ptr();
     let len = unsafe { (*thin).data.header.length };
     let fake_slice = ptr::slice_from_raw_parts_mut(thin as *mut T, len);
 
@@ -58,12 +56,9 @@ impl<H, T> ThinArc<H, T> {
         F: FnOnce(&Arc<HeaderSliceWithLengthUnchecked<H, T>>) -> U,
     {
         // Synthesize transient Arc, which never touches the refcount of the ArcInner.
-        let transient = unsafe {
-            ManuallyDrop::new(Arc::from_protected(Arc {
-                p: ptr::NonNull::new_unchecked(thin_to_thick(self.ptr.as_ptr())),
-                phantom: PhantomData,
-            }))
-        };
+        let transient = ManuallyDrop::new(Arc::from_protected(unsafe {
+            Arc::from_raw_inner(thin_to_thick(self))
+        }));
 
         // Expose the transient Arc to the callback, which may clone it if it wants
         // and forward the result to the user
@@ -78,12 +73,7 @@ impl<H, T> ThinArc<H, T> {
         F: FnOnce(&Arc<HeaderSliceWithLengthProtected<H, T>>) -> U,
     {
         // Synthesize transient Arc, which never touches the refcount of the ArcInner.
-        let transient = unsafe {
-            ManuallyDrop::new(Arc {
-                p: ptr::NonNull::new_unchecked(thin_to_thick(self.ptr.as_ptr())),
-                phantom: PhantomData,
-            })
-        };
+        let transient = ManuallyDrop::new(unsafe { Arc::from_raw_inner(thin_to_thick(self)) });
 
         // Expose the transient Arc to the callback, which may clone it if it wants
         // and forward the result to the user
@@ -112,12 +102,7 @@ impl<H, T> ThinArc<H, T> {
         }
 
         // Synthesize transient Arc, which never touches the refcount of the ArcInner.
-        let transient = unsafe {
-            ManuallyDrop::new(Arc {
-                p: ptr::NonNull::new_unchecked(thin_to_thick(self.ptr.as_ptr())),
-                phantom: PhantomData,
-            })
-        };
+        let transient = ManuallyDrop::new(unsafe { Arc::from_raw_inner(thin_to_thick(self)) });
 
         let mut guard = DropGuard {
             transient,
@@ -218,7 +203,7 @@ impl<H, T> Deref for ThinArc<H, T> {
 
     #[inline]
     fn deref(&self) -> &Self::Target {
-        unsafe { &(*thin_to_thick(self.ptr.as_ptr())).data.inner() }
+        unsafe { (*thin_to_thick(self)).data.inner() }
     }
 }
 
@@ -232,7 +217,7 @@ impl<H, T> Clone for ThinArc<H, T> {
 impl<H, T> Drop for ThinArc<H, T> {
     #[inline]
     fn drop(&mut self) {
-        let _ = Arc::from_thin(ThinArc {
+        let _ = Arc::protected_from_thin(ThinArc {
             ptr: self.ptr,
             phantom: PhantomData,
         });
@@ -308,7 +293,7 @@ impl<H, T> Arc<HeaderSliceWithLengthProtected<H, T>> {
     #[inline]
     pub fn protected_from_thin(a: ThinArc<H, T>) -> Self {
         let a = ManuallyDrop::new(a);
-        let ptr = thin_to_thick(a.ptr.as_ptr());
+        let ptr = thin_to_thick(&a);
         unsafe { Arc::from_raw_inner(ptr) }
     }
 
