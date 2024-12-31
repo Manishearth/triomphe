@@ -299,7 +299,7 @@ impl<T: Serialize> Serialize for UniqueArc<T> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{Arc, HeaderSliceWithLength, HeaderWithLength, UniqueArc};
+    use crate::{Arc, HeaderSliceWithLengthUnchecked, HeaderWithLength, UniqueArc};
     use core::{convert::TryFrom, mem::MaybeUninit};
 
     #[test]
@@ -332,7 +332,7 @@ mod tests {
 
     #[test]
     fn from_header_and_uninit_slice() {
-        let mut uarc: UniqueArc<HeaderSliceWithLength<u8, [MaybeUninit<u16>]>> =
+        let mut uarc: UniqueArc<HeaderSliceWithLengthUnchecked<u8, [MaybeUninit<u16>]>> =
             UniqueArc::from_header_and_uninit_slice(HeaderWithLength::new(1, 3), 3);
         uarc.slice.fill(MaybeUninit::new(2));
         let arc = unsafe { uarc.assume_init_slice_with_header() }.shareable();
