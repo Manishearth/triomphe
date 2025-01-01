@@ -1180,17 +1180,16 @@ mod tests {
         assert_eq!(42, *arc_unique);
     }
 
+    #[cfg(feature = "std")]
     #[test]
     fn into_unique_data_race() {
-        use std::thread;
-
         // Exists to be exercised by Miri to check for data races.
         let a = Arc::new(0);
         let b = a.clone();
-        thread::spawn(move || {
+        std::thread::spawn(move || {
             let _value = *b;
         });
-        thread::spawn(move || {
+        std::thread::spawn(move || {
             *Arc::into_unique(a).unwrap() += 1;
         });
     }
