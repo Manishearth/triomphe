@@ -28,6 +28,18 @@ use crate::header::HeaderSliceWithLengthUnchecked;
 /// via `HeaderSliceWithLengthProtected`.
 #[repr(transparent)]
 pub struct ThinArc<H, T> {
+    // We can pointer-cast between this target type
+    // of `ArcInner<HeaderSlice<HeaderWithLength<H>, [T; 0]>`
+    // and the types
+    // `ArcInner<HeaderSliceWithLengthProtected<H, T>>` and
+    // `ArcInner<HeaderSliceWithLengthUnchecked<H, T>>` (= `ArcInner<HeaderSlice<HeaderWithLength<H>, [T]>>`).
+    // [By adding appropriate length metadata to the pointer.]
+    // All types involved are #[repr(C)] or #[repr(transparent)], to ensure the safety of such casts
+    // (in particular `HeaderSlice`, `HeaderWithLength`, `HeaderSliceWithLengthProtected`).
+    //
+    // The safe API of `ThinArc` ensures that the length in the `HeaderWithLength`
+    // corretcly set - or verified - upon creation of a `ThinArc` and can't be modified
+    // to fall out of sync with the true slice length for this value & allocation.
     ptr: ptr::NonNull<ArcInner<HeaderSlice<HeaderWithLength<H>, [T; 0]>>>,
     phantom: PhantomData<(H, T)>,
 }
@@ -281,6 +293,8 @@ impl<H, T> Arc<HeaderSliceWithLengthUnchecked<H, T>> {
     #[inline]
     fn from_protected(a: Arc<HeaderSliceWithLengthProtected<H, T>>) -> Self {
         // Safety: HeaderSliceWithLengthProtected and HeaderSliceWithLengthUnchecked have the same layout
+        // The whole `Arc` should also be layout compatible (as a transparent wrapper around `NonNull` pointers with the same
+        // metadata type) but we still conservatively avoid a direct transmute here and use a pointer-cast instead.
         unsafe { Arc::from_raw_inner(Arc::into_raw_inner(a) as _) }
     }
 }
@@ -322,6 +336,8 @@ impl<H, T> Arc<HeaderSliceWithLengthProtected<H, T>> {
     unsafe fn from_unprotected_unchecked(a: Arc<HeaderSliceWithLengthUnchecked<H, T>>) -> Self {
         // Safety: HeaderSliceWithLengthProtected and HeaderSliceWithLengthUnchecked have the same layout
         // and the safety invariant on HeaderSliceWithLengthProtected.inner is bubbled up
+        // The whole `Arc` should also be layout compatible (as a transparent wrapper around `NonNull` pointers with the same
+        // metadata type) but we still conservatively avoid a direct transmute here and use a pointer-cast instead.
         unsafe { Arc::from_raw_inner(Arc::into_raw_inner(a) as _) }
     }
 }
