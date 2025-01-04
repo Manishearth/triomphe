@@ -13,7 +13,7 @@ use core::mem::{ManuallyDrop, MaybeUninit};
 use core::ops::Deref;
 use core::ptr::{self, NonNull};
 use core::sync::atomic;
-use core::sync::atomic::Ordering::{Acquire, AcqRel, Relaxed, Release};
+use core::sync::atomic::Ordering::{AcqRel, Acquire, Relaxed, Release};
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -183,20 +183,29 @@ impl<T> Arc<T> {
     /// // `Arc::try_unique(x).ok()` and `Arc::try_unique(y).ok()` instead.
     /// ```
     pub fn into_unique(this: Self) -> Option<UniqueArc<T>> {
-        // Ensure that the normal `Drop` implementation is called.
+        // Prevent ourselves from being dropped in avoid clashing with the existing drop logic.
         let this = ManuallyDrop::new(this);
 
-        // Perform the same logic as `drop_inner` to ensure that the reference count is decremented.
+        // Update the reference count by decrementing by one, and if we are the last holder of this `Arc` (previous
+        // value was one), then we know we now can reconstitute this `Arc` into a `UniqueArc`. Otherwise, there's
+        // nothing else for us to do and we return `None` to signal that we weren't the last holder.
+        //
+        // Unlike `drop_inner`, we use AcqRel ordering on `fetch_sub` (instead of `fetch_sub(Release)` followed by
+        // `load(Acquire)`) to end up with the same outcome, just with a single atomic operation instead. This _is_
+        // strictly stronger (in terms of synchronization) but is not materially different: we're simply ensuring that
+        // any subsequent mutation of the data through `UniqueArc` cannot be ordered _before_ the reference count is
+        // updated, which could allow for other threads to see the data in an inconsistent state, ultimately leading to
+        // a data race.
         if this.inner().count.fetch_sub(1, AcqRel) != 1 {
             return None;
         }
 
-        // We're the last holder of this `Arc`, so we can safely turn this into a `UniqueArc`, but we need to first
-        // set the reference count back up to 1.
-        this.inner().count.store(1, Release);
+        // Update the reference count _back_ to one, which upholds the reference count invariant of `UniqueArc`.
+        //
+        // Since we know we are the only thread accessing this `Arc` at this point, we have no special ordering needs.
+        this.inner().count.store(1, Relaxed);
 
-        // SAFETY: The reference count is 1, so the invariant of `UniqueArc` is upheld, and recovering `Self` from
-        // `ManuallyDrop` is safe as we know we're the only owners at this point.
+        // SAFETY: The reference count is guaranteed to be one at this point.
         Some(unsafe { UniqueArc::from_arc(ManuallyDrop::into_inner(this)) })
     }
 }
@@ -1182,7 +1191,7 @@ mod tests {
 
     #[cfg(feature = "std")]
     #[test]
-    fn into_unique_data_race() {
+    fn into_unique_data_race_no_sleep() {
         // Exists to be exercised by Miri to check for data races.
         let a = Arc::new(0);
         let b = a.clone();
@@ -1192,6 +1201,25 @@ mod tests {
         std::thread::spawn(move || {
             *Arc::into_unique(a).unwrap() += 1;
         });
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn into_unique_data_race_sleep() {
+        // Exists to be exercised by Miri to check for data races.
+        let a = Arc::new(0);
+        let b = a.clone();
+        let t1 = std::thread::spawn(move || {
+            let _value = *b;
+        });
+        let t2 = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            if let Some(mut u) = Arc::into_unique(a) {
+                *u += 1
+            }
+        });
+        t1.join().unwrap();
+        t2.join().unwrap();
     }
 
     #[allow(dead_code)]
