@@ -651,7 +651,7 @@ impl<T: ?Sized> Arc<T> {
         //
         // [1]: (www.boost.org/doc/libs/1_55_0/doc/html/atomic/usage_examples.html)
         // [2]: https://github.com/rust-lang/rust/pull/41714
-        self.inner().count.load(Acquire);
+        atomic::fence(Acquire);
 
         unsafe {
             self.drop_slow();
