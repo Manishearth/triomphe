@@ -631,13 +631,11 @@ impl<T: ?Sized> Arc<T> {
             return;
         }
 
-        // FIXME(bholley): Use the updated comment when [2] is merged.
-        //
-        // This load is needed to prevent reordering of use of the data and
-        // deletion of the data.  Because it is marked `Release`, the decreasing
-        // of the reference count synchronizes with this `Acquire` load. This
+        // This fence is needed to prevent reordering of use of the data and
+        // deletion of the data. Because it is marked `Release`, the decreasing
+        // of the reference count synchronizes with this `Acquire` fence. This
         // means that use of the data happens before decreasing the reference
-        // count, which happens before this load, which happens before the
+        // count, which happens before this fence, which happens before the
         // deletion of the data.
         //
         // As explained in the [Boost documentation][1],
@@ -649,8 +647,13 @@ impl<T: ?Sized> Arc<T> {
         // > through this reference must obviously happened before), and an
         // > "acquire" operation before deleting the object.
         //
+        // In particular, while the contents of an Arc are usually immutable, it's
+        // possible to have interior writes to something like a Mutex<T>. Since a
+        // Mutex is not acquired when it is deleted, we can't rely on its
+        // synchronization logic to make writes in thread A visible to a destructor
+        // running in thread B.
+        //
         // [1]: (www.boost.org/doc/libs/1_55_0/doc/html/atomic/usage_examples.html)
-        // [2]: https://github.com/rust-lang/rust/pull/41714
         atomic::fence(Acquire);
 
         unsafe {
