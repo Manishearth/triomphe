@@ -2,6 +2,7 @@ use core::fmt;
 use core::marker::PhantomData;
 use core::mem::ManuallyDrop;
 use core::ops::Deref;
+use core::panic::{RefUnwindSafe, UnwindSafe};
 use core::ptr;
 
 use super::{Arc, ArcBorrow};
@@ -37,6 +38,8 @@ pub struct OffsetArc<T> {
 
 unsafe impl<T: Sync + Send> Send for OffsetArc<T> {}
 unsafe impl<T: Sync + Send> Sync for OffsetArc<T> {}
+
+impl<T: RefUnwindSafe> UnwindSafe for OffsetArc<T> {}
 
 impl<T> Deref for OffsetArc<T> {
     type Target = T;

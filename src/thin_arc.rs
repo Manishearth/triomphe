@@ -6,6 +6,7 @@ use core::iter::{ExactSizeIterator, Iterator};
 use core::marker::PhantomData;
 use core::mem::ManuallyDrop;
 use core::ops::Deref;
+use core::panic::{RefUnwindSafe, UnwindSafe};
 use core::ptr;
 
 use super::{Arc, ArcInner, HeaderSlice, HeaderSliceWithLengthProtected, HeaderWithLength};
@@ -46,6 +47,8 @@ pub struct ThinArc<H, T> {
 
 unsafe impl<H: Sync + Send, T: Sync + Send> Send for ThinArc<H, T> {}
 unsafe impl<H: Sync + Send, T: Sync + Send> Sync for ThinArc<H, T> {}
+
+impl<H: RefUnwindSafe, T: RefUnwindSafe> UnwindSafe for ThinArc<H, T> {}
 
 // Synthesize a fat pointer from a thin pointer.
 //

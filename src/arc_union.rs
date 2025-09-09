@@ -1,5 +1,6 @@
 use core::fmt;
 use core::marker::PhantomData;
+use core::panic::{RefUnwindSafe, UnwindSafe};
 use core::ptr;
 
 use super::{Arc, ArcBorrow};
@@ -21,6 +22,8 @@ pub struct ArcUnion<A, B> {
 
 unsafe impl<A: Sync + Send, B: Send + Sync> Send for ArcUnion<A, B> {}
 unsafe impl<A: Sync + Send, B: Send + Sync> Sync for ArcUnion<A, B> {}
+
+impl<A: RefUnwindSafe, B: RefUnwindSafe> UnwindSafe for ArcUnion<A, B> {}
 
 impl<A: PartialEq, B: PartialEq> PartialEq for ArcUnion<A, B> {
     fn eq(&self, other: &Self) -> bool {
