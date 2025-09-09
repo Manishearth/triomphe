@@ -11,6 +11,7 @@ use core::iter::FromIterator;
 use core::marker::PhantomData;
 use core::mem::{ManuallyDrop, MaybeUninit};
 use core::ops::Deref;
+use core::panic::{RefUnwindSafe, UnwindSafe};
 use core::ptr::{self, NonNull};
 use core::sync::atomic;
 use core::sync::atomic::Ordering::{Acquire, Relaxed, Release};
@@ -72,6 +73,8 @@ pub struct Arc<T: ?Sized> {
 
 unsafe impl<T: ?Sized + Sync + Send> Send for Arc<T> {}
 unsafe impl<T: ?Sized + Sync + Send> Sync for Arc<T> {}
+
+impl<T: ?Sized + RefUnwindSafe> UnwindSafe for Arc<T> {}
 
 impl<T> Arc<T> {
     /// Construct an `Arc<T>`

@@ -1,5 +1,6 @@
 use core::fmt;
 use core::marker::PhantomData;
+use core::panic::{RefUnwindSafe, UnwindSafe};
 use core::ptr;
 
 use super::{Arc, ArcBorrow};
@@ -21,6 +22,8 @@ pub struct ArcUnion<A, B> {
 
 unsafe impl<A: Sync + Send, B: Send + Sync> Send for ArcUnion<A, B> {}
 unsafe impl<A: Sync + Send, B: Send + Sync> Sync for ArcUnion<A, B> {}
+
+impl<A: RefUnwindSafe, B: RefUnwindSafe> UnwindSafe for ArcUnion<A, B> {}
 
 impl<A: PartialEq, B: PartialEq> PartialEq for ArcUnion<A, B> {
     fn eq(&self, other: &Self) -> bool {
@@ -62,7 +65,7 @@ impl<A, B> ArcUnion<A, B> {
     }
 
     /// Returns an enum representing a borrow of either A or B.
-    pub fn borrow(&self) -> ArcUnionBorrow<A, B> {
+    pub fn borrow(&self) -> ArcUnionBorrow<'_, A, B> {
         if self.is_first() {
             let ptr = self.p.as_ptr() as *const A;
             let borrow = unsafe { ArcBorrow::from_ptr(ptr) };
@@ -99,7 +102,7 @@ impl<A, B> ArcUnion<A, B> {
     }
 
     /// Returns a borrow of the first type if applicable, otherwise `None`.
-    pub fn as_first(&self) -> Option<ArcBorrow<A>> {
+    pub fn as_first(&self) -> Option<ArcBorrow<'_, A>> {
         match self.borrow() {
             ArcUnionBorrow::First(x) => Some(x),
             ArcUnionBorrow::Second(_) => None,
@@ -107,7 +110,7 @@ impl<A, B> ArcUnion<A, B> {
     }
 
     /// Returns a borrow of the second type if applicable, otherwise None.
-    pub fn as_second(&self) -> Option<ArcBorrow<B>> {
+    pub fn as_second(&self) -> Option<ArcBorrow<'_, B>> {
         match self.borrow() {
             ArcUnionBorrow::First(_) => None,
             ArcUnionBorrow::Second(x) => Some(x),
