@@ -14,7 +14,7 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: Install Rust
-      run: rustup default ${{ matrix.rust}}
+      run: rustup default ${{ matrix.rust }}
     - name: Build
       run: cargo build --verbose
     - name: Test
@@ -30,7 +30,11 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: Install Rust Nightly
-      run: rustup toolchain install nightly --component miri --profile minimal
+      uses: actions-rs/toolchain@v1
+      with:
+          toolchain: nightly
+          profile: minimal
+          components: miri
     - name: Miri Test
       run: cargo +nightly miri test
     - name: Test --no-default-features
@@ -54,14 +58,20 @@ jobs:
     - name: Install latest nightly
       uses: actions-rs/toolchain@v1
       with:
-          toolchain: nightly
+          # FIXME: Due to https://github.com/rust-lang/rust/issues/146465, more recent Nightly versions
+          # are unable to build the doctests. Since we only need Nightly to use -Zbuild-std, it's fine
+          # to just pin the last working version. Once that issue is fixed, we can use more recent
+          # versions again.
+          toolchain: nightly-2025-09-05
           override: true
+          profile: minimal
           components: rust-src
     - name: Run thread sanitizer
-      run: |
-        export RUSTDOCFLAGS='-Zsanitizer=thread'
-        export RUSTFLAGS='-Zsanitizer=thread'
-        for _ in $(seq 1 10); do cargo +nightly test -Z build-std --target --target $(uname -m)-unknown-linux-gnu; done
+      env:
+        RUSTDOCFLAGS: -Zsanitizer=thread
+        RUSTFLAGS: -Zsanitizer=thread
+      run:
+        for _ in $(seq 1 10); do cargo test -Zbuild-std --target $(uname -m)-unknown-linux-gnu; done
 
   address_sanitizer:
     runs-on: ubuntu-latest
@@ -81,8 +91,10 @@ jobs:
       with:
           toolchain: nightly
           override: true
+          profile: minimal
     - name: Run address sanitizer
-      run: |
-        export RUSTDOCFLAGS='-Zsanitizer=address'
-        export RUSTFLAGS='-Zsanitizer=address'
-        for _ in $(seq 1 10); do cargo +nightly test; done
+      env:
+        RUSTDOCFLAGS: -Zsanitizer=address
+        RUSTFLAGS: -Zsanitizer=address
+      run:
+        for _ in $(seq 1 10); do cargo test; done
