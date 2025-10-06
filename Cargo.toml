@@ -1,6 +1,6 @@
 [package]
 name = "triomphe"
-version = "0.1.14"
+version = "0.1.15"
 authors = ["Manish Goregaokar <manishsmail@gmail.com>", "The Servo Project Developers"]
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/Manishearth/triomphe"
@@ -10,6 +10,7 @@ categories = ["concurrency", "data-structures"]
 
 # MSRV policy: May be updated in minor versions
 rust-version = "1.76"
+edition = "2021"
 
 [features]
 std = []
