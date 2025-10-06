@@ -14,7 +14,7 @@ use core::ops::Deref;
 use core::panic::{RefUnwindSafe, UnwindSafe};
 use core::ptr::{self, NonNull};
 use core::sync::atomic;
-use core::sync::atomic::Ordering::{Acquire, Relaxed, Release};
+use core::sync::atomic::Ordering::{AcqRel, Acquire, Relaxed, Release};
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -148,6 +148,68 @@ impl<T> Arc<T> {
     /// ```
     pub fn try_unwrap(this: Self) -> Result<T, Self> {
         Self::try_unique(this).map(UniqueArc::into_inner)
+    }
+
+    /// Converts the `Arc` to `UniqueArc` if the `Arc` has exactly one strong reference.
+    ///
+    /// Otherwise, `None` is returned and the `Arc` is dropped.
+    ///
+    /// If `Arc::into_unique` is called on every clone of this `Arc`, it is guaranteed that exactly one of the calls
+    /// returns a `UniqueArc`. This means in particular that the inner data is not dropped. This can be useful when
+    /// it is desirable to recover the inner value in a way that does not require coordination amongst the various
+    /// copies of `Arc`.
+    ///
+    /// `Arc::try_unique` is conceptually similar to `Arc::into_unique`, but it is meant for different use-cases. If
+    /// used as a direct replacement for `Arc::into_unique`, such as with the expression `Arc::try_unique(this).ok()`,
+    /// then it does not give the same guarantee as described in the previous paragraph.
+    ///
+    /// For more information, see the examples below and read the documentation of `Arc::try_unique`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use triomphe::Arc;
+    ///
+    /// let x = Arc::new(3);
+    /// let y = Arc::clone(&x);
+    ///
+    /// // Two threads calling `Arc::into_inner` on both clones of an `Arc`:
+    /// let x_thread = std::thread::spawn(|| Arc::into_unique(x));
+    /// let y_thread = std::thread::spawn(|| Arc::into_unique(y));
+    ///
+    /// let x_unique = x_thread.join().unwrap();
+    /// let y_unique = y_thread.join().unwrap();
+    ///
+    /// // One of the threads is guaranteed to receive the inner value:
+    /// assert!((x_unique.is_some() && y_unique.is_none()) || (x_unique.is_none() && y_unique.is_some()));
+    /// // The result could also be `(None, None)` if the threads called
+    /// // `Arc::try_unique(x).ok()` and `Arc::try_unique(y).ok()` instead.
+    /// ```
+    pub fn into_unique(this: Self) -> Option<UniqueArc<T>> {
+        // Prevent ourselves from being dropped in avoid clashing with the existing drop logic.
+        let this = ManuallyDrop::new(this);
+
+        // Update the reference count by decrementing by one, and if we are the last holder of this `Arc` (previous
+        // value was one), then we know we now can reconstitute this `Arc` into a `UniqueArc`. Otherwise, there's
+        // nothing else for us to do and we return `None` to signal that we weren't the last holder.
+        //
+        // Unlike `drop_inner`, we use AcqRel ordering on `fetch_sub` (instead of `fetch_sub(Release)` followed by
+        // `load(Acquire)`) to end up with the same outcome, just with a single atomic operation instead. This _is_
+        // strictly stronger (in terms of synchronization) but is not materially different: we're simply ensuring that
+        // any subsequent mutation of the data through `UniqueArc` cannot be ordered _before_ the reference count is
+        // updated, which could allow for other threads to see the data in an inconsistent state, ultimately leading to
+        // a data race.
+        if this.inner().count.fetch_sub(1, AcqRel) != 1 {
+            return None;
+        }
+
+        // Update the reference count _back_ to one, which upholds the reference count invariant of `UniqueArc`.
+        //
+        // Since we know we are the only thread accessing this `Arc` at this point, we have no special ordering needs.
+        this.inner().count.store(1, Relaxed);
+
+        // SAFETY: The reference count is guaranteed to be one at this point.
+        Some(unsafe { UniqueArc::from_arc(ManuallyDrop::into_inner(this)) })
     }
 }
 
@@ -1114,6 +1176,56 @@ mod tests {
         let data: *const dyn AnInteger = data as *const _;
         let arc: Arc<dyn AnInteger> = unsafe { Arc::from_raw(data) };
         assert_eq!(19, arc.get_me_an_integer());
+    }
+
+    #[test]
+    fn into_unique() {
+        let arc = Arc::new(42);
+        assert_eq!(1, Arc::count(&arc));
+
+        let arc2 = Arc::clone(&arc);
+
+        assert_eq!(2, Arc::count(&arc));
+
+        let arc2_unique = Arc::into_unique(arc2);
+        assert!(arc2_unique.is_none());
+        assert_eq!(1, Arc::count(&arc));
+
+        let arc_unique = Arc::into_unique(arc).unwrap();
+        assert_eq!(42, *arc_unique);
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn into_unique_data_race_no_sleep() {
+        // Exists to be exercised by Miri to check for data races.
+        let a = Arc::new(0);
+        let b = a.clone();
+        std::thread::spawn(move || {
+            let _value = *b;
+        });
+        std::thread::spawn(move || {
+            *Arc::into_unique(a).unwrap() += 1;
+        });
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn into_unique_data_race_sleep() {
+        // Exists to be exercised by Miri to check for data races.
+        let a = Arc::new(0);
+        let b = a.clone();
+        let t1 = std::thread::spawn(move || {
+            let _value = *b;
+        });
+        let t2 = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            if let Some(mut u) = Arc::into_unique(a) {
+                *u += 1
+            }
+        });
+        t1.join().unwrap();
+        t2.join().unwrap();
     }
 
     #[allow(dead_code)]
