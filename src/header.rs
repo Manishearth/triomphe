@@ -8,6 +8,8 @@ use core::marker::PhantomData;
 use core::mem::{self, ManuallyDrop};
 use core::ptr::{self, addr_of_mut};
 
+use crate::OffsetArc;
+
 use super::{Arc, ArcInner};
 
 /// Structure to allow Arc-managing some fixed-sized data and a variably-sized
@@ -197,6 +199,18 @@ impl From<&str> for Arc<str> {
 }
 
 impl From<String> for Arc<str> {
+    fn from(s: String) -> Self {
+        Self::from(&s[..])
+    }
+}
+
+impl From<&str> for OffsetArc<str> {
+    fn from(s: &str) -> Self {
+        Arc::into_raw_offset(Arc::from(s))
+    }
+}
+
+impl From<String> for OffsetArc<str> {
     fn from(s: String) -> Self {
         Self::from(&s[..])
     }
