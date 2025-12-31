@@ -108,27 +108,6 @@ impl<T> Arc<T> {
         f(&transient)
     }
 
-    /// Converts an `Arc` into a `OffsetArc`. This consumes the `Arc`, so the refcount
-    /// is not modified.
-    #[inline]
-    pub fn into_raw_offset(a: Self) -> OffsetArc<T> {
-        unsafe {
-            OffsetArc {
-                ptr: ptr::NonNull::new_unchecked(Arc::into_raw(a) as *mut T),
-                phantom: PhantomData,
-            }
-        }
-    }
-
-    /// Converts a `OffsetArc` into an `Arc`. This consumes the `OffsetArc`, so the refcount
-    /// is not modified.
-    #[inline]
-    pub fn from_raw_offset(a: OffsetArc<T>) -> Self {
-        let a = ManuallyDrop::new(a);
-        let ptr = a.ptr.as_ptr();
-        unsafe { Arc::from_raw(ptr) }
-    }
-
     /// Returns the inner value, if the [`Arc`] has exactly one strong reference.
     ///
     /// Otherwise, an [`Err`] is returned with the same [`Arc`] that was
@@ -264,6 +243,27 @@ impl<T: ?Sized> Arc<T> {
         //   in the beginning of the `ArcInner`, which is the beginning of the allocation.
         let arc_inner_ptr = ptr.byte_sub(offset_of_data);
         Arc::from_raw_inner(arc_inner_ptr as *mut ArcInner<T>)
+    }
+
+    /// Converts a `OffsetArc` into an `Arc`. This consumes the `OffsetArc`, so the refcount
+    /// is not modified.
+    #[inline]
+    pub fn from_raw_offset(a: OffsetArc<T>) -> Self {
+        let a = ManuallyDrop::new(a);
+        let ptr = a.ptr.as_ptr();
+        unsafe { Arc::from_raw(ptr) }
+    }
+
+    /// Converts an `Arc` into a `OffsetArc`. This consumes the `Arc`, so the refcount
+    /// is not modified.
+    #[inline]
+    pub fn into_raw_offset(a: Self) -> OffsetArc<T> {
+        unsafe {
+            OffsetArc {
+                ptr: ptr::NonNull::new_unchecked(Arc::into_raw(a) as *mut T),
+                phantom: PhantomData,
+            }
+        }
     }
 
     /// Returns the raw pointer.
