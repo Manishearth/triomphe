@@ -84,6 +84,18 @@ impl<T: ?Sized + PartialEq> PartialEq for OffsetArc<T> {
 
 impl<T: ?Sized + Eq> Eq for OffsetArc<T> {}
 
+impl<T: ?Sized + PartialOrd> PartialOrd for OffsetArc<T> {
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
+        (**self).partial_cmp(&**other)
+    }
+}
+
+impl<T: ?Sized + Ord> Ord for OffsetArc<T> {
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
+        (**self).cmp(&**other)
+    }
+}
+
 impl<T> OffsetArc<T> {
     /// If uniquely owned, provide a mutable reference
     /// Else create a copy, and mutate that
