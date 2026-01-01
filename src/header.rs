@@ -66,6 +66,30 @@ impl<H, T> Arc<HeaderSlice<H, [T]>> {
         }
     }
 
+    /// Creates an Arc for a HeaderSlice using the function to fill in its tail.
+    /// The resulting Arc will be fat.
+    pub fn from_header_and_fn(header: H, num_items:usize, fill: impl FnOnce(&mut [T])) -> Self
+    where
+        T: Copy,
+    {
+        assert_ne!(mem::size_of::<T>(), 0, "Need to think about ZST");
+
+        let inner = Arc::allocate_for_header_and_slice(num_items);
+
+        unsafe {
+            // Write the data.
+            ptr::write(&mut ((*inner.as_ptr()).data.header), header);
+            let dst = (*inner.as_ptr()).data.slice.as_mut_ptr();
+            let dst_slice = core::slice::from_raw_parts_mut(dst, num_items);
+            fill(dst_slice)
+        }
+
+        Arc {
+            p: inner,
+            phantom: PhantomData,
+        }
+    }
+
     /// Creates an Arc for a HeaderSlice using the given header struct and
     /// iterator to generate the slice. The resulting Arc will be fat.
     pub fn from_header_and_slice(header: H, items: &[T]) -> Self
