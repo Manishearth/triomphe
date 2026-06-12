@@ -247,6 +247,7 @@ mod tests {
             std::mem::size_of::<Option<ThinArcOrInt<(), String>>>(),
             std::mem::size_of::<usize>()
         );
+        assert_ne!(None, Some(ThinArcOrInt::<(), ()>::from_isize(0)));
     }
 
     #[test]
