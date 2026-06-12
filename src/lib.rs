@@ -44,6 +44,7 @@ mod header;
 mod iterator_as_exact_size_iterator;
 mod offset_arc;
 mod thin_arc;
+mod thin_arc_or_int;
 mod unique_arc;
 
 pub use arc::*;
@@ -52,6 +53,7 @@ pub use arc_union::*;
 pub use header::*;
 pub use offset_arc::*;
 pub use thin_arc::*;
+pub use thin_arc_or_int::*;
 pub use unique_arc::*;
 
 #[cfg(feature = "std")]

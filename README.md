@@ -8,6 +8,7 @@ Fork of Arc. This has the following advantages over std::sync::Arc:
 * `triomphe::ArcBorrow` is functionally similar to `&triomphe::Arc<T>`, however in memory it's simply `&T`. This makes it more flexible for FFI; the source of the borrow need not be an `Arc` pinned on the stack (and can instead be a pointer from C++, or an `OffsetArc`). Additionally, this helps avoid pointer-chasing.
 * `triomphe::Arc` can be constructed for dynamically-sized types via `from_header_and_iter`
 * `triomphe::ThinArc` provides thin-pointer `Arc`s to dynamically sized types
+* `triomphe::ThinArcOrInt` is a disjoint union of `ThinArcOrInt` and an integer
 * `triomphe::ArcUnion` is union of two `triomphe:Arc`s which fits inside one word of memory
 
 This crate is a version of `servo_arc` meant for general community use.
