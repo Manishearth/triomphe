@@ -11,7 +11,7 @@ use core::ptr::{self, addr_of_mut};
 use serde::{Deserialize, Serialize};
 
 use crate::iterator_as_exact_size_iterator::IteratorAsExactSizeIterator;
-use crate::{AllocError, HeaderSlice};
+use crate::{mdref, AllocError, HeaderSlice};
 
 use super::{Arc, ArcInner};
 
@@ -119,12 +119,9 @@ impl<T: ?Sized> UniqueArc<T> {
     /// Convert to a shareable `Arc<T>` once we're done mutating it
     #[inline]
     pub const fn shareable(self) -> Arc<T> {
-        let p = self.0.p;
-        mem::forget(self);
-        Arc {
-            p,
-            phantom: PhantomData,
-        }
+        let this = ManuallyDrop::new(self);
+        // Safety: UniqueArc isn't drop, just the inner Arc is
+        unsafe { mem::transmute_copy(&mdref(&this).0) }
     }
 
     /// Creates a new [`UniqueArc`] from the given [`Arc`].
@@ -185,10 +182,9 @@ impl<T> UniqueArc<MaybeUninit<T>> {
     /// has actually been initialized before calling this method.
     #[inline]
     pub const unsafe fn assume_init(this: Self) -> UniqueArc<T> {
-        let p = this.0.p.cast();
-        mem::forget(this);
+        let this = ManuallyDrop::new(this);
         UniqueArc(Arc {
-            p,
+            p: mdref(&this).0.p.cast(),
             phantom: PhantomData,
         })
     }
@@ -222,9 +218,7 @@ impl<T> UniqueArc<[MaybeUninit<T>]> {
     /// Must initialize all fields before calling this function.
     #[inline]
     pub const unsafe fn assume_init_slice(this: Self) -> UniqueArc<[T]> {
-        let ptr = this.0.ptr();
-        mem::forget(this);
-        unsafe { UniqueArc(Arc::from_raw_inner(ptr as _)) }
+        UniqueArc(this.shareable().assume_init())
     }
 }
 

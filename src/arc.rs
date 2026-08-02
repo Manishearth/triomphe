@@ -1,6 +1,7 @@
 use alloc::alloc::handle_alloc_error;
 use alloc::boxed::Box;
 use core::alloc::Layout;
+use core::borrow;
 use core::cmp::Ordering;
 use core::convert::From;
 use core::ffi::c_void;
@@ -14,13 +15,12 @@ use core::panic::{RefUnwindSafe, UnwindSafe};
 use core::ptr::{self, addr_of_mut, NonNull};
 use core::sync::atomic;
 use core::sync::atomic::Ordering::{AcqRel, Acquire, Relaxed, Release};
-use core::{borrow, mem};
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "stable_deref_trait")]
 use stable_deref_trait::{CloneStableDeref, StableDeref};
 
-use crate::{abort, AllocError, ArcBorrow, HeaderSlice, OffsetArc, UniqueArc};
+use crate::{abort, mdref, AllocError, ArcBorrow, HeaderSlice, OffsetArc, UniqueArc};
 
 /// A soft limit on the amount of references that may be made to an `Arc`.
 ///
@@ -244,9 +244,8 @@ impl<T: ?Sized> Arc<T> {
     /// It is recommended to use OffsetArc for this.
     #[inline]
     pub const fn into_raw(this: Self) -> *const T {
-        let ret = this.as_ptr();
-        mem::forget(this);
-        ret
+        let this = ManuallyDrop::new(this);
+        mdref(&this).as_ptr()
     }
 
     /// Reconstruct the `Arc<T>` from a raw pointer obtained from into_raw()
@@ -279,8 +278,8 @@ impl<T: ?Sized> Arc<T> {
     /// is not modified.
     #[inline]
     pub const fn from_raw_offset(a: OffsetArc<T>) -> Self {
-        let ptr = a.ptr.as_ptr();
-        mem::forget(a);
+        let a = ManuallyDrop::new(a);
+        let ptr = mdref(&a).ptr.as_ptr();
         unsafe { Arc::from_raw(ptr) }
     }
 
@@ -338,9 +337,8 @@ impl<T: ?Sized> Arc<T> {
 
     #[inline]
     pub(super) const fn into_raw_inner(this: Self) -> *mut ArcInner<T> {
-        let ret = this.ptr();
-        mem::forget(this);
-        ret
+        let this = ManuallyDrop::new(this);
+        mdref(&this).ptr()
     }
 
     /// Construct an `Arc` from an allocated `ArcInner`.
@@ -575,9 +573,8 @@ impl<T> Arc<MaybeUninit<T>> {
     /// Must initialize all fields before calling this function.
     #[inline]
     pub const unsafe fn assume_init(self) -> Arc<T> {
-        let ptr = self.ptr();
-        mem::forget(self);
-        Arc::from_raw_inner(ptr.cast())
+        let this = ManuallyDrop::new(self);
+        Arc::from_raw_inner(mdref(&this).ptr().cast())
     }
 }
 
@@ -609,9 +606,8 @@ impl<T> Arc<[MaybeUninit<T>]> {
     /// Must initialize all fields before calling this function.
     #[inline]
     pub const unsafe fn assume_init(self) -> Arc<[T]> {
-        let ptr = self.ptr();
-        mem::forget(self);
-        Arc::from_raw_inner(ptr as _)
+        let this = ManuallyDrop::new(self);
+        Arc::from_raw_inner(mdref(&this).ptr() as _)
     }
 }
 

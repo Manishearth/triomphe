@@ -72,3 +72,7 @@ fn abort() -> ! {
     let _double_panicer = PanicOnDrop;
     panic!();
 }
+
+const fn mdref<T>(v: &core::mem::ManuallyDrop<T>) -> &T {
+    unsafe { core::mem::transmute(v) }
+}

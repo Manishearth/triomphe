@@ -1,5 +1,6 @@
 use core::cmp::Ordering;
 use core::ffi::c_void;
+use core::fmt;
 use core::hash::{Hash, Hasher};
 use core::iter::{ExactSizeIterator, Iterator};
 use core::marker::PhantomData;
@@ -7,11 +8,10 @@ use core::mem::ManuallyDrop;
 use core::ops::Deref;
 use core::panic::{RefUnwindSafe, UnwindSafe};
 use core::ptr;
-use core::{fmt, mem};
 
 use super::{Arc, ArcInner, HeaderSlice, HeaderSliceWithLengthProtected, HeaderWithLength};
 use crate::header::HeaderSliceWithLengthUnchecked;
-use crate::AllocError;
+use crate::{mdref, AllocError};
 
 /// A "thin" `Arc` containing dynamically sized data
 ///
@@ -233,9 +233,8 @@ impl<H, T> ThinArc<H, T> {
     /// Consume ThinArc and returned the wrapped pointer.
     #[inline]
     pub const fn into_raw(self) -> *const c_void {
-        let ret = self.ptr();
-        mem::forget(self);
-        ret
+        let this = ManuallyDrop::new(self);
+        mdref(&this).ptr()
     }
 
     /// Provides a raw pointer to the data.
@@ -355,8 +354,8 @@ impl<H, T> Arc<HeaderSliceWithLengthProtected<H, T>> {
     /// is not modified.
     #[inline]
     pub const fn protected_from_thin(a: ThinArc<H, T>) -> Self {
-        let ptr = thin_to_thick(&a);
-        mem::forget(a);
+        let a = ManuallyDrop::new(a);
+        let ptr = thin_to_thick(mdref(&a));
         unsafe { Arc::from_raw_inner(ptr) }
     }
 
