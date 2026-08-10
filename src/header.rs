@@ -295,7 +295,7 @@ pub struct HeaderWithLength<H> {
 impl<H> HeaderWithLength<H> {
     /// Creates a new HeaderWithLength.
     #[inline]
-    pub fn new(header: H, length: usize) -> Self {
+    pub const fn new(header: H, length: usize) -> Self {
         HeaderWithLength { header, length }
     }
 }
@@ -410,25 +410,25 @@ pub struct HeaderSliceWithLengthProtected<H, T> {
 pub(crate) type HeaderSliceWithLengthUnchecked<H, T> = HeaderSlice<HeaderWithLength<H>, [T]>;
 
 impl<H, T> HeaderSliceWithLengthProtected<H, T> {
-    pub fn header(&self) -> &H {
+    pub const fn header(&self) -> &H {
         &self.inner.header.header
     }
-    pub fn header_mut(&mut self) -> &mut H {
+    pub const fn header_mut(&mut self) -> &mut H {
         // Safety: only the length is unsafe to mutate
         &mut self.inner.header.header
     }
-    pub fn length(&self) -> usize {
+    pub const fn length(&self) -> usize {
         self.inner.header.length
     }
 
-    pub fn slice(&self) -> &[T] {
+    pub const fn slice(&self) -> &[T] {
         &self.inner.slice
     }
-    pub fn slice_mut(&mut self) -> &mut [T] {
+    pub const fn slice_mut(&mut self) -> &mut [T] {
         // Safety: only the length is unsafe to mutate
         &mut self.inner.slice
     }
-    pub(crate) fn inner(&self) -> &HeaderSliceWithLengthUnchecked<H, T> {
+    pub(crate) const fn inner(&self) -> &HeaderSliceWithLengthUnchecked<H, T> {
         // This is safe in an immutable context
         &self.inner
     }

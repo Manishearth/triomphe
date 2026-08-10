@@ -9,7 +9,7 @@ keywords = ["arc", "ffi", "sync", "data-structure"]
 categories = ["concurrency", "data-structures"]
 
 # MSRV policy: May be updated in minor versions
-rust-version = "1.81"
+rust-version = "1.85"
 edition = "2021"
 
 [features]

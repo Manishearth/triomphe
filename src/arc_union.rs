@@ -44,7 +44,7 @@ pub enum ArcUnionBorrow<'a, A: 'a, B: 'a> {
 }
 
 impl<A, B> ArcUnion<A, B> {
-    unsafe fn new(ptr: *mut ()) -> Self {
+    const unsafe fn new(ptr: *mut ()) -> Self {
         ArcUnion {
             p: ptr::NonNull::new_unchecked(ptr),
             phantom_a: PhantomData,
@@ -79,7 +79,7 @@ impl<A, B> ArcUnion<A, B> {
 
     /// Creates an `ArcUnion` from an instance of the first type.
     #[inline]
-    pub fn from_first(other: Arc<A>) -> Self {
+    pub const fn from_first(other: Arc<A>) -> Self {
         unsafe { Self::new(Arc::into_raw(other) as *mut _) }
     }
 

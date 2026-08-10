@@ -63,7 +63,7 @@ impl<'a, T> ArcBorrow<'a, T> {
     ///   of the 3 types, only Trimphe's `Arc` offers a direct API for obtaining such a pointer:
     ///   [`Arc::as_ptr`].
     #[inline]
-    pub unsafe fn from_ptr(ptr: *const T) -> Self {
+    pub const unsafe fn from_ptr(ptr: *const T) -> Self {
         unsafe { ArcBorrow(NonNull::new_unchecked(ptr as *mut T), PhantomData) }
     }
 
@@ -105,7 +105,7 @@ impl<'a, T> ArcBorrow<'a, T> {
     /// Similar to deref, but uses the lifetime |a| rather than the lifetime of
     /// self, which is incompatible with the signature of the Deref trait.
     #[inline]
-    pub fn get(&self) -> &'a T {
+    pub const fn get(&self) -> &'a T {
         unsafe { &*self.0.as_ptr() }
     }
 }

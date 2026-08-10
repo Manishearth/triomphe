@@ -158,7 +158,7 @@ impl<T: ?Sized> OffsetArc<T> {
     /// Produce a pointer to the data that can be converted back
     /// to an `Arc`
     #[inline]
-    pub fn borrow_arc(&self) -> ArcBorrow<'_, T> {
+    pub const fn borrow_arc(&self) -> ArcBorrow<'_, T> {
         ArcBorrow(self.ptr, PhantomData)
     }
 
