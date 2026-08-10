@@ -73,6 +73,10 @@ fn abort() -> ! {
     panic!();
 }
 
+// `ManuallyDrop::deref` is a `Deref` trait method, so it isn't callable in a
+// `const fn` on our MSRV. This is a const-compatible substitute.
 const fn mdref<T>(v: &core::mem::ManuallyDrop<T>) -> &T {
+    // SAFETY: `ManuallyDrop<T>` is `repr(transparent)` over `T`, so `&ManuallyDrop<T>`
+    // and `&T` have identical layout and this reference cast is sound.
     unsafe { core::mem::transmute(v) }
 }
