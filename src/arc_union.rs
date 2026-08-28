@@ -131,10 +131,10 @@ impl<A, B> Drop for ArcUnion<A, B> {
     fn drop(&mut self) {
         match self.borrow() {
             ArcUnionBorrow::First(x) => unsafe {
-                let _ = Arc::from_raw(&*x);
+                let _ = Arc::from_raw(ArcBorrow::to_raw(&x));
             },
             ArcUnionBorrow::Second(x) => unsafe {
-                let _ = Arc::from_raw(&*x);
+                let _ = Arc::from_raw(ArcBorrow::to_raw(&x));
             },
         }
     }
@@ -161,5 +161,72 @@ impl<'a, A, B> ArcUnionBorrow<'a, A, B> {
             ArcUnionBorrow::First(arc) => ArcBorrow::strong_count(arc),
             ArcUnionBorrow::Second(arc) => ArcBorrow::strong_count(arc),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn safe_arc_union_drop_reaches_refcount_through_data_pointer() {
+        let union = ArcUnion::<u8, u64>::from_first(Arc::new(0xA5));
+        drop(union);
+    }
+
+    #[test]
+    fn arc_union_first_and_second_smoke() {
+        let a = Arc::new(123_u32);
+        let b = Arc::new(456_u64);
+
+        let u_a = ArcUnion::<u32, u64>::from_first(a.clone());
+        let u_b = ArcUnion::<u32, u64>::from_second(b.clone());
+
+        assert!(u_a.is_first());
+        assert!(!u_a.is_second());
+        assert!(!u_b.is_first());
+        assert!(u_b.is_second());
+
+        assert_eq!(ArcUnion::strong_count(&u_a), 2);
+        assert_eq!(ArcUnion::strong_count(&u_b), 2);
+
+        assert_eq!(*u_a.as_first().unwrap(), 123);
+        assert!(u_a.as_second().is_none());
+        assert!(u_b.as_first().is_none());
+        assert_eq!(*u_b.as_second().unwrap(), 456);
+
+        let u_a2 = u_a.clone();
+        assert_eq!(ArcUnion::strong_count(&u_a), 3);
+        assert_eq!(u_a, u_a2);
+        assert_ne!(u_a, u_b);
+
+        drop(u_a2);
+        assert_eq!(ArcUnion::strong_count(&u_a), 2);
+        drop(u_a);
+        assert_eq!(Arc::strong_count(&a), 1);
+
+        drop(u_b);
+        assert_eq!(Arc::strong_count(&b), 1);
+    }
+
+    #[test]
+    fn arc_union_zst() {
+        let a = Arc::new(());
+        let b = Arc::new(());
+
+        let u_a = ArcUnion::<(), ()>::from_first(a.clone());
+        let u_b = ArcUnion::<(), ()>::from_second(b.clone());
+
+        assert!(u_a.is_first());
+        assert!(u_b.is_second());
+
+        assert_eq!(ArcUnion::strong_count(&u_a), 2);
+        assert_eq!(ArcUnion::strong_count(&u_b), 2);
+
+        drop(u_a);
+        drop(u_b);
+
+        assert_eq!(Arc::strong_count(&a), 1);
+        assert_eq!(Arc::strong_count(&b), 1);
     }
 }
