@@ -170,7 +170,7 @@ impl<T> UniqueArc<MaybeUninit<T>> {
 
     /// Obtain a mutable pointer to the stored `MaybeUninit<T>`.
     pub const fn as_mut_ptr(&mut self) -> *mut MaybeUninit<T> {
-        unsafe { &mut (*self.0.ptr()).data }
+        unsafe { addr_of_mut!((*self.0.ptr()).data) }
     }
 
     /// Convert to an initialized Arc.
