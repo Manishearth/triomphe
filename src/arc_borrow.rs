@@ -49,6 +49,15 @@ impl<'a, T> ArcBorrow<'a, T> {
         arc
     }
 
+    /// Returns the raw pointer to `T`.
+    ///
+    /// This pointer retains full provenance over the entire `ArcInner` allocation,
+    /// and thus can be safely passed to [`Arc::from_raw`].
+    #[inline]
+    pub const fn to_raw(this: &Self) -> *const T {
+        this.0.as_ptr()
+    }
+
     /// For constructing from a pointer known to be Arc-backed,
     /// e.g. if we obtain such a pointer over FFI
     ///
@@ -59,9 +68,8 @@ impl<'a, T> ArcBorrow<'a, T> {
     /// - The pointer to `T` must have come from a Triomphe `Arc`, `UniqueArc`, or `ArcBorrow`.
     /// - The pointer to `T` must have full provenance over the `Arc`, `UniqueArc`, or `ArcBorrow`,
     ///   in particular it must not have been derived from a `&T` reference, as references immediately
-    ///   loose all provenance over the adjacent reference counts. As of this writing,
-    ///   of the 3 types, only Trimphe's `Arc` offers a direct API for obtaining such a pointer:
-    ///   [`Arc::as_ptr`].
+    ///   lose all provenance over the adjacent reference counts. Triomphe's `Arc` and `ArcBorrow`
+    ///   offer direct APIs for obtaining such a pointer: [`Arc::as_ptr`], [`Arc::into_raw`], and [`ArcBorrow::to_raw`].
     #[inline]
     pub const unsafe fn from_ptr(ptr: *const T) -> Self {
         unsafe { ArcBorrow(NonNull::new_unchecked(ptr as *mut T), PhantomData) }
