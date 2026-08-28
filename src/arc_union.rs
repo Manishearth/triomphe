@@ -71,7 +71,7 @@ impl<A, B> ArcUnion<A, B> {
             let borrow = unsafe { ArcBorrow::from_ptr(ptr) };
             ArcUnionBorrow::First(borrow)
         } else {
-            let ptr = ((self.p.as_ptr() as usize) & !0x1) as *const B;
+            let ptr = self.p.as_ptr().map_addr(|addr| addr & !0x1) as *const B;
             let borrow = unsafe { ArcBorrow::from_ptr(ptr) };
             ArcUnionBorrow::Second(borrow)
         }
@@ -86,7 +86,9 @@ impl<A, B> ArcUnion<A, B> {
     /// Creates an `ArcUnion` from an instance of the second type.
     #[inline]
     pub fn from_second(other: Arc<B>) -> Self {
-        unsafe { Self::new(((Arc::into_raw(other) as usize) | 0x1) as *mut _) }
+        let ptr = Arc::into_raw(other);
+        let tagged = ptr.map_addr(|addr| addr | 0x1);
+        unsafe { Self::new(tagged as *mut _) }
     }
 
     /// Returns true if this `ArcUnion` contains the first type.
