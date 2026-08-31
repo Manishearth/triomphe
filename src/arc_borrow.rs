@@ -79,7 +79,7 @@ impl<'a, T> ArcBorrow<'a, T> {
     /// true if they come from the same allocation
     #[inline]
     pub fn ptr_eq(this: &Self, other: &Self) -> bool {
-        this.0 == other.0
+        core::ptr::addr_eq(this.0.as_ptr(), other.0.as_ptr())
     }
 
     /// The reference count of the underlying `Arc`.
