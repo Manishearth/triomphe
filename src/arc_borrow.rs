@@ -31,15 +31,15 @@ unsafe impl<'a, T: ?Sized + Sync + Send> Sync for ArcBorrow<'a, T> {}
 
 impl<'a, T: RefUnwindSafe + ?Sized> UnwindSafe for ArcBorrow<'a, T> {}
 
-impl<'a, T> Copy for ArcBorrow<'a, T> {}
-impl<'a, T> Clone for ArcBorrow<'a, T> {
+impl<'a, T: ?Sized> Copy for ArcBorrow<'a, T> {}
+impl<'a, T: ?Sized> Clone for ArcBorrow<'a, T> {
     #[inline]
     fn clone(&self) -> Self {
         *self
     }
 }
 
-impl<'a, T> ArcBorrow<'a, T> {
+impl<'a, T: ?Sized> ArcBorrow<'a, T> {
     /// Clone this as an `Arc<T>`. This bumps the refcount.
     #[inline]
     pub fn clone_arc(&self) -> Arc<T> {
@@ -61,9 +61,6 @@ impl<'a, T> ArcBorrow<'a, T> {
     /// For constructing from a pointer known to be Arc-backed,
     /// e.g. if we obtain such a pointer over FFI
     ///
-    // TODO: should from_ptr be relaxed to unsized types? It can't be
-    // converted back to an Arc right now for unsized types.
-    //
     /// # Safety
     /// - The pointer to `T` must have come from a Triomphe `Arc`, `UniqueArc`, or `ArcBorrow`.
     /// - The pointer to `T` must have full provenance over the `Arc`, `UniqueArc`, or `ArcBorrow`,
@@ -118,7 +115,7 @@ impl<'a, T> ArcBorrow<'a, T> {
     }
 }
 
-impl<'a, T> Deref for ArcBorrow<'a, T> {
+impl<'a, T: ?Sized> Deref for ArcBorrow<'a, T> {
     type Target = T;
 
     #[inline]
@@ -155,4 +152,14 @@ fn clone_arc_borrow() {
     let b: ArcBorrow<'_, i32> = x.borrow_arc();
     let y = b.clone_arc();
     assert_eq!(x, y);
+}
+
+#[test]
+fn clone_arc_borrow_str() {
+    let x: Arc<str> = Arc::from("hello");
+    let b: ArcBorrow<'_, str> = x.borrow_arc();
+    let y: Arc<str> = b.clone_arc();
+    assert_eq!(x, y);
+    assert_eq!(&*b, "hello");
+    assert!(ArcBorrow::ptr_eq(&b, &b));
 }
