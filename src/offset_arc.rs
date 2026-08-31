@@ -175,3 +175,51 @@ impl<T: ?Sized> OffsetArc<T> {
         Self::with_arc(this, |arc| Arc::strong_count(arc))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn offset_arc_smoke() {
+        let arc = Arc::new(42);
+        let offset = Arc::into_raw_offset(arc);
+
+        assert_eq!(*offset, 42);
+        assert_eq!(OffsetArc::strong_count(&offset), 1);
+
+        let offset2 = offset.clone();
+        assert_eq!(OffsetArc::strong_count(&offset), 2);
+        assert_eq!(offset, offset2);
+
+        let regular_arc = offset2.clone_arc();
+        assert_eq!(Arc::strong_count(&regular_arc), 3);
+        drop(regular_arc);
+
+        drop(offset2);
+        assert_eq!(OffsetArc::strong_count(&offset), 1);
+
+        let mut offset = offset;
+        *offset.make_mut() = 99;
+        assert_eq!(*offset, 99);
+
+        let offset2 = offset.clone();
+        *offset.make_mut() = 100;
+        assert_eq!(*offset, 100);
+        assert_eq!(*offset2, 99);
+    }
+
+    #[test]
+    fn offset_arc_str() {
+        let s: OffsetArc<str> = OffsetArc::from("hello world");
+        assert_eq!(&*s, "hello world");
+        assert_eq!(OffsetArc::strong_count(&s), 1);
+
+        let b = s.borrow_arc();
+        assert_eq!(&*b, "hello world");
+
+        let s2 = s.clone();
+        assert_eq!(OffsetArc::strong_count(&s), 2);
+        assert_eq!(s, s2);
+    }
+}
