@@ -239,4 +239,56 @@ mod tests {
         assert_eq!(OffsetArc::strong_count(&s), 2);
         assert_eq!(s, s2);
     }
+
+    #[test]
+    #[cfg(feature = "std")]
+    fn safe_offset_arc_make_mut_reentrant_drop_panic_uaf() {
+        use core::sync::atomic::{AtomicBool, Ordering};
+        use std::panic::{catch_unwind, AssertUnwindSafe};
+        use std::sync::{Arc as StdArc, Mutex};
+
+        struct ReentrantClone {
+            value: usize,
+            sibling: StdArc<Mutex<Option<Arc<ReentrantClone>>>>,
+            drop_panicked: StdArc<AtomicBool>,
+        }
+
+        impl Clone for ReentrantClone {
+            fn clone(&self) -> Self {
+                // `Arc::make_mut` observed two owners before calling us. Removing the
+                // other owner here makes its transient owner the last one.
+                drop(self.sibling.lock().unwrap().take());
+                Self {
+                    value: self.value,
+                    sibling: self.sibling.clone(),
+                    drop_panicked: self.drop_panicked.clone(),
+                }
+            }
+        }
+
+        impl Drop for ReentrantClone {
+            fn drop(&mut self) {
+                if !self.drop_panicked.swap(true, Ordering::SeqCst) {
+                    panic!("old payload drop sentinel");
+                }
+            }
+        }
+
+        let sibling = StdArc::new(Mutex::new(None));
+        let drop_panicked = StdArc::new(AtomicBool::new(false));
+        let arc = Arc::new(ReentrantClone {
+            value: 37,
+            sibling: sibling.clone(),
+            drop_panicked,
+        });
+        *sibling.lock().unwrap() = Some(arc.clone());
+        let mut offset: OffsetArc<ReentrantClone> = Arc::into_raw_offset(arc);
+
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            let _ = OffsetArc::make_mut(&mut offset);
+        }));
+        assert!(result.is_err());
+
+        assert_eq!(offset.value, 37);
+    }
 }
