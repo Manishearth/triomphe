@@ -113,21 +113,38 @@ impl<T> OffsetArc<T> {
     where
         T: Clone,
     {
+        // It is possible for `Arc::make_mut` to replace the Arc, or panic during
+        // cloning or dropping the replaced old allocation.
+        // We use a drop guard to ensure `self` is always updated to point to the current Arc,
+        // even if a panic unwinds out of `Arc::make_mut`.
+        struct DropGuard<'a, T> {
+            arc: ManuallyDrop<Arc<T>>,
+            this: &'a mut OffsetArc<T>,
+        }
+
+        impl<'a, T> Drop for DropGuard<'a, T> {
+            fn drop(&mut self) {
+                // Safety: we write the current Arc (whether still the original or newly cloned)
+                // back into `self.this`, ensuring `self.this` is always valid.
+                unsafe {
+                    let arc = ManuallyDrop::take(&mut self.arc);
+                    ptr::write(self.this, Arc::into_raw_offset(arc));
+                }
+            }
+        }
+
         unsafe {
             // extract the OffsetArc as an owned variable. This does not modify
             // the refcount and we should be careful to not drop `this`
             let this = ptr::read(self);
-            // treat it as a real Arc, but wrapped in a ManuallyDrop
-            // in case `Arc::make_mut()` panics in the clone impl
-            let mut arc = ManuallyDrop::new(Arc::from_raw_offset(this));
+            let mut guard = DropGuard {
+                arc: ManuallyDrop::new(Arc::from_raw_offset(this)),
+                this: self,
+            };
             // obtain the mutable reference. Cast away the lifetime since
             // we have the right lifetime bounds in the parameters.
             // This may mutate `arc`.
-            let ret = Arc::make_mut(&mut *arc) as *mut _;
-            // Store the possibly-mutated arc back inside, after converting
-            // it to a OffsetArc again. Release the ManuallyDrop.
-            // This also does not modify the refcount or call drop on self
-            ptr::write(self, Arc::into_raw_offset(ManuallyDrop::into_inner(arc)));
+            let ret = Arc::make_mut(&mut *guard.arc) as *mut _;
             &mut *ret
         }
     }
@@ -221,5 +238,57 @@ mod tests {
         let s2 = s.clone();
         assert_eq!(OffsetArc::strong_count(&s), 2);
         assert_eq!(s, s2);
+    }
+
+    #[test]
+    #[cfg(feature = "std")]
+    fn safe_offset_arc_make_mut_reentrant_drop_panic_uaf() {
+        use core::sync::atomic::{AtomicBool, Ordering};
+        use std::panic::{catch_unwind, AssertUnwindSafe};
+        use std::sync::{Arc as StdArc, Mutex};
+
+        struct ReentrantClone {
+            value: usize,
+            sibling: StdArc<Mutex<Option<Arc<ReentrantClone>>>>,
+            drop_panicked: StdArc<AtomicBool>,
+        }
+
+        impl Clone for ReentrantClone {
+            fn clone(&self) -> Self {
+                // `Arc::make_mut` observed two owners before calling us. Removing the
+                // other owner here makes its transient owner the last one.
+                drop(self.sibling.lock().unwrap().take());
+                Self {
+                    value: self.value,
+                    sibling: self.sibling.clone(),
+                    drop_panicked: self.drop_panicked.clone(),
+                }
+            }
+        }
+
+        impl Drop for ReentrantClone {
+            fn drop(&mut self) {
+                if !self.drop_panicked.swap(true, Ordering::SeqCst) {
+                    panic!("old payload drop sentinel");
+                }
+            }
+        }
+
+        let sibling = StdArc::new(Mutex::new(None));
+        let drop_panicked = StdArc::new(AtomicBool::new(false));
+        let arc = Arc::new(ReentrantClone {
+            value: 37,
+            sibling: sibling.clone(),
+            drop_panicked,
+        });
+        *sibling.lock().unwrap() = Some(arc.clone());
+        let mut offset: OffsetArc<ReentrantClone> = Arc::into_raw_offset(arc);
+
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            let _ = OffsetArc::make_mut(&mut offset);
+        }));
+        assert!(result.is_err());
+
+        assert_eq!(offset.value, 37);
     }
 }
