@@ -113,21 +113,38 @@ impl<T> OffsetArc<T> {
     where
         T: Clone,
     {
+        // It is possible for `Arc::make_mut` to replace the Arc, or panic during
+        // cloning or dropping the replaced old allocation.
+        // We use a drop guard to ensure `self` is always updated to point to the current Arc,
+        // even if a panic unwinds out of `Arc::make_mut`.
+        struct DropGuard<'a, T> {
+            arc: ManuallyDrop<Arc<T>>,
+            this: &'a mut OffsetArc<T>,
+        }
+
+        impl<'a, T> Drop for DropGuard<'a, T> {
+            fn drop(&mut self) {
+                // Safety: we write the current Arc (whether still the original or newly cloned)
+                // back into `self.this`, ensuring `self.this` is always valid.
+                unsafe {
+                    let arc = ManuallyDrop::take(&mut self.arc);
+                    ptr::write(self.this, Arc::into_raw_offset(arc));
+                }
+            }
+        }
+
         unsafe {
             // extract the OffsetArc as an owned variable. This does not modify
             // the refcount and we should be careful to not drop `this`
             let this = ptr::read(self);
-            // treat it as a real Arc, but wrapped in a ManuallyDrop
-            // in case `Arc::make_mut()` panics in the clone impl
-            let mut arc = ManuallyDrop::new(Arc::from_raw_offset(this));
+            let mut guard = DropGuard {
+                arc: ManuallyDrop::new(Arc::from_raw_offset(this)),
+                this: self,
+            };
             // obtain the mutable reference. Cast away the lifetime since
             // we have the right lifetime bounds in the parameters.
             // This may mutate `arc`.
-            let ret = Arc::make_mut(&mut *arc) as *mut _;
-            // Store the possibly-mutated arc back inside, after converting
-            // it to a OffsetArc again. Release the ManuallyDrop.
-            // This also does not modify the refcount or call drop on self
-            ptr::write(self, Arc::into_raw_offset(ManuallyDrop::into_inner(arc)));
+            let ret = Arc::make_mut(&mut *guard.arc) as *mut _;
             &mut *ret
         }
     }
