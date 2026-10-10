@@ -15,12 +15,28 @@ use super::{Arc, ArcBorrow};
 ///
 /// This could probably be extended to support four types if necessary.
 pub struct ArcUnion<A, B> {
+    // Safety invariant: `p` is a non-null pointer derived from `Arc::into_raw`
+    // that owns one strong reference to a live `ArcInner<A>` (when `p.addr() & 1 == 0`)
+    // or `ArcInner<B>` (when `p.addr() & 1 == 1`, with bit 0 set via `map_addr`).
+    // Because `ArcInner<T>` is `#[repr(C)]` starting with `AtomicUsize` (whose
+    // size and alignment are `align_of::<usize>() >= 2`), the `data` field
+    // pointer returned by `Arc::into_raw` is always at least 2-byte aligned
+    // (bit 0 is 0), and `p` retains full provenance over the `ArcInner` allocation.
     p: ptr::NonNull<()>,
     phantom_a: PhantomData<A>,
     phantom_b: PhantomData<B>,
 }
 
+// SAFETY:
+// `ArcUnion<A, B>` logically owns either an `Arc<A>` or an `Arc<B>`. Moving it
+// across threads requires both `Arc<A>: Send` (`A: Sync + Send`) and
+// `Arc<B>: Send` (`B: Sync + Send`).
 unsafe impl<A: Sync + Send, B: Send + Sync> Send for ArcUnion<A, B> {}
+
+// SAFETY:
+// Sharing `&ArcUnion<A, B>` across threads permits borrowing `&A` or `&B` and
+// cloning the underlying `Arc`, which is sound when `A: Sync + Send` and
+// `B: Sync + Send`.
 unsafe impl<A: Sync + Send, B: Send + Sync> Sync for ArcUnion<A, B> {}
 
 impl<A: RefUnwindSafe, B: RefUnwindSafe> UnwindSafe for ArcUnion<A, B> {}
@@ -44,9 +60,17 @@ pub enum ArcUnionBorrow<'a, A: 'a, B: 'a> {
 }
 
 impl<A, B> ArcUnion<A, B> {
+    /// # Safety
+    ///
+    /// The caller must ensure that `ptr` is non-null, retains full provenance
+    /// over a live `ArcInner<A>` or `ArcInner<B>` allocation from `Arc::into_raw`,
+    /// transfers ownership of one strong reference to the returned `ArcUnion`,
+    /// and has bit `0x1` clear if it points to `A` or set (via `map_addr`) if
+    /// it points to `B`.
     const unsafe fn new(ptr: *mut ()) -> Self {
         ArcUnion {
-            p: ptr::NonNull::new_unchecked(ptr),
+            // SAFETY: By this function's `# Safety` precondition, `ptr` is non-null.
+            p: unsafe { ptr::NonNull::new_unchecked(ptr) },
             phantom_a: PhantomData,
             phantom_b: PhantomData,
         }
@@ -68,10 +92,21 @@ impl<A, B> ArcUnion<A, B> {
     pub fn borrow(&self) -> ArcUnionBorrow<'_, A, B> {
         if self.is_first() {
             let ptr = self.p.as_ptr() as *const A;
+            // SAFETY:
+            // `self.is_first()` checked that bit `0x1` of `self.p` is 0. By
+            // `ArcUnion::p`'s field invariant, `ptr` is the untagged pointer to
+            // `A` obtained from `Arc::into_raw` with full provenance over the
+            // live `ArcInner<A>` owned by `self` for the lifetime of `&self`.
             let borrow = unsafe { ArcBorrow::from_ptr(ptr) };
             ArcUnionBorrow::First(borrow)
         } else {
             let ptr = self.p.as_ptr().map_addr(|addr| addr & !0x1) as *const B;
+            // SAFETY:
+            // `!self.is_first()` means bit `0x1` of `self.p` is 1. By
+            // `ArcUnion::p`'s field invariant, clearing bit `0x1` via `map_addr`
+            // recovers the original 2-byte-aligned pointer to `B` from
+            // `Arc::into_raw` while preserving full provenance over the live
+            // `ArcInner<B>` owned by `self` for the lifetime of `&self`.
             let borrow = unsafe { ArcBorrow::from_ptr(ptr) };
             ArcUnionBorrow::Second(borrow)
         }
@@ -80,6 +115,12 @@ impl<A, B> ArcUnion<A, B> {
     /// Creates an `ArcUnion` from an instance of the first type.
     #[inline]
     pub const fn from_first(other: Arc<A>) -> Self {
+        // SAFETY:
+        // `Arc::into_raw(other)` returns a non-null pointer to `ArcInner<A>::data`
+        // with full provenance over `ArcInner<A>`, transferring ownership of one
+        // strong reference. Because `ArcInner<A>` is `#[repr(C)]` with a leading
+        // `AtomicUsize` (alignment >= 2), the offset and address of `data` are
+        // even, so bit `0x1` is 0 as required for the `First` variant.
         unsafe { Self::new(Arc::into_raw(other) as *mut _) }
     }
 
@@ -88,6 +129,12 @@ impl<A, B> ArcUnion<A, B> {
     pub fn from_second(other: Arc<B>) -> Self {
         let ptr = Arc::into_raw(other);
         let tagged = ptr.map_addr(|addr| addr | 0x1);
+        // SAFETY:
+        // `ptr` came from `Arc::into_raw(other)` and is non-null with full
+        // provenance over `ArcInner<B>` and an even address (bit `0x1` clear).
+        // Setting bit `0x1` via `map_addr` preserves provenance and produces a
+        // non-null pointer with bit `0x1` set, transferring ownership of one
+        // strong reference for the `Second` variant.
         unsafe { Self::new(tagged as *mut _) }
     }
 
@@ -132,9 +179,22 @@ impl<A, B> Clone for ArcUnion<A, B> {
 impl<A, B> Drop for ArcUnion<A, B> {
     fn drop(&mut self) {
         match self.borrow() {
+            // SAFETY:
+            // `x` was constructed in `self.borrow()` from the untagged raw
+            // pointer originally produced by `Arc::into_raw`. `ArcBorrow::to_raw(&x)`
+            // extracts that pointer without creating an intermediate `&A`
+            // reference, preserving provenance over the `ArcInner<A>` header.
+            // Reconstructing and dropping `Arc<A>` consumes the single strong
+            // reference owned by `*self`, which is being dropped and will not
+            // be accessed again.
             ArcUnionBorrow::First(x) => unsafe {
                 let _ = Arc::from_raw(ArcBorrow::to_raw(&x));
             },
+            // SAFETY:
+            // Same as the `First` arm for `ArcInner<B>`: `ArcBorrow::to_raw(&x)`
+            // returns the untagged pointer with full `ArcInner<B>` provenance,
+            // and dropping the reconstructed `Arc<B>` consumes the strong
+            // reference owned by `*self`.
             ArcUnionBorrow::Second(x) => unsafe {
                 let _ = Arc::from_raw(ArcBorrow::to_raw(&x));
             },
