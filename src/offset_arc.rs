@@ -32,11 +32,25 @@ use super::{Arc, ArcBorrow};
 /// an FFI call overhead.
 #[repr(transparent)]
 pub struct OffsetArc<T: ?Sized> {
+    // Safety invariant: `ptr` is non-null, properly aligned, and points to the
+    // initialized `data: T` field of a live `ArcInner<T>` heap allocation. It
+    // retains full provenance over the entire `ArcInner<T>` allocation (as
+    // obtained from `Arc::into_raw`), and this `OffsetArc` owns one strong
+    // reference count on that `ArcInner<T>`.
     pub(crate) ptr: ptr::NonNull<T>,
     pub(crate) phantom: PhantomData<T>,
 }
 
+// SAFETY:
+// `OffsetArc<T>` is semantically an `Arc<T>` stored at the `data` field offset:
+// moving it across threads transfers ownership of one strong reference to the
+// underlying `ArcInner<T>`, which may share `T` across threads (`T: Sync`) and
+// drop `T` on the last thread (`T: Send`).
 unsafe impl<T: ?Sized + Sync + Send> Send for OffsetArc<T> {}
+
+// SAFETY:
+// Sharing `&OffsetArc<T>` across threads only provides shared access (`&T`) to
+// the payload (`T: Sync`), unless cloned and dropped on another thread (`T: Send`).
 unsafe impl<T: ?Sized + Sync + Send> Sync for OffsetArc<T> {}
 
 impl<T: ?Sized + RefUnwindSafe> UnwindSafe for OffsetArc<T> {}
@@ -46,6 +60,12 @@ impl<T: ?Sized> Deref for OffsetArc<T> {
 
     #[inline]
     fn deref(&self) -> &Self::Target {
+        // SAFETY:
+        // By the `OffsetArc::ptr` field invariant, `self.ptr` is non-null,
+        // properly aligned, and points to an initialized `T` inside a live
+        // `ArcInner<T>` allocation whose strong count is at least 1 for the
+        // lifetime of `&self`. Shared access to `T` is sound because `Arc` only
+        // permits mutation when uniquely owned (`make_mut` / `get_mut`).
         unsafe { &*self.ptr.as_ptr() }
     }
 }
@@ -118,14 +138,31 @@ impl<T> OffsetArc<T> {
         // We use a drop guard to ensure `self` is always updated to point to the current Arc,
         // even if a panic unwinds out of `Arc::make_mut`.
         struct DropGuard<'a, T> {
+            // Safety invariant: `arc` is initialized and owns the active strong
+            // reference originally moved out of `*this` (or its replacement
+            // installed by `Arc::make_mut`) until `DropGuard::drop` takes it.
             arc: ManuallyDrop<Arc<T>>,
             this: &'a mut OffsetArc<T>,
         }
 
         impl<'a, T> Drop for DropGuard<'a, T> {
             fn drop(&mut self) {
-                // Safety: we write the current Arc (whether still the original or newly cloned)
-                // back into `self.this`, ensuring `self.this` is always valid.
+                // SAFETY:
+                // 1. `ManuallyDrop::take(&mut self.arc)`: By `DropGuard`'s
+                //    invariant, `self.arc` is initialized and `take` is called
+                //    only once here in `Drop::drop`. Even if `Arc::make_mut`
+                //    unwinds during `T::clone` or during the old `Arc<T>`'s
+                //    `Drop` in `*this = Arc::new(...)`, Rust place-assignment
+                //    semantics move the old value out and write the new `Arc<T>`
+                //    into `*this` before dropping the old temporary, so
+                //    `self.arc` always holds a valid, live `Arc<T>`.
+                // 2. `ptr::write(self.this, Arc::into_raw_offset(arc))`:
+                //    `self.this` is a valid, aligned mutable reference whose
+                //    previous `OffsetArc<T>` was logically moved out by
+                //    `ptr::read` before constructing `DropGuard`. Writing the
+                //    reconstructed `OffsetArc<T>` without dropping `*self.this`
+                //    restores `*self.this`'s field invariant and transfers the
+                //    strong reference back to `*self.this`.
                 unsafe {
                     let arc = ManuallyDrop::take(&mut self.arc);
                     ptr::write(self.this, Arc::into_raw_offset(arc));
@@ -133,20 +170,32 @@ impl<T> OffsetArc<T> {
             }
         }
 
-        unsafe {
-            // extract the OffsetArc as an owned variable. This does not modify
-            // the refcount and we should be careful to not drop `this`
-            let this = ptr::read(self);
-            let mut guard = DropGuard {
-                arc: ManuallyDrop::new(Arc::from_raw_offset(this)),
-                this: self,
-            };
-            // obtain the mutable reference. Cast away the lifetime since
-            // we have the right lifetime bounds in the parameters.
-            // This may mutate `arc`.
-            let ret = Arc::make_mut(&mut *guard.arc) as *mut _;
-            &mut *ret
-        }
+        // SAFETY:
+        // `self` is a valid, aligned reference to an initialized `OffsetArc<T>`.
+        // `ptr::read(self)` bitwise-copies the `OffsetArc<T>` out so its strong
+        // reference can be transferred to `Arc::from_raw_offset(this)`.
+        // Postcondition: `*self` is logically moved-out until `guard` drops (both
+        // on normal return and on unwind), so `*self` must not be read or
+        // dropped before `guard` runs.
+        let this = unsafe { ptr::read(self) };
+        let mut guard = DropGuard {
+            arc: ManuallyDrop::new(Arc::from_raw_offset(this)),
+            this: self,
+        };
+        // Obtain the mutable reference. `Arc::make_mut` guarantees that
+        // `guard.arc` is uniquely owned (strong count == 1) when it returns.
+        let ret = Arc::make_mut(&mut *guard.arc) as *mut T;
+        drop(guard);
+        // SAFETY:
+        // `ret` was obtained from `Arc::make_mut(&mut *guard.arc)`, so it is
+        // non-null, aligned, and points to an initialized `T` in a uniquely
+        // owned `ArcInner<T>` allocation. Dropping `guard` above converted that
+        // same `Arc<T>` back into `*self` via `Arc::into_raw_offset` and
+        // `ptr::write`, which only stores the data pointer into `self.ptr`
+        // without deallocating, moving, or creating conflicting references to
+        // the heap `T`. Because `self` is mutably borrowed for the caller's
+        // lifetime, `&mut *ret` has exclusive access for that lifetime.
+        unsafe { &mut *ret }
     }
 }
 
@@ -159,6 +208,13 @@ impl<T: ?Sized> OffsetArc<T> {
         F: FnOnce(&Arc<T>) -> U,
     {
         // Synthesize transient Arc, which never touches the refcount of the ArcInner.
+        //
+        // SAFETY:
+        // By `OffsetArc::ptr`'s field invariant, `self.ptr.as_ptr()` was created
+        // by `Arc::into_raw` and retains full provenance over the live
+        // `ArcInner<T>`. Wrapping the reconstructed `Arc<T>` in `ManuallyDrop`
+        // ensures `Arc::from_raw` does not decrement the strong reference count
+        // owned by `*self` when `with_arc` returns or if `f` unwinds.
         let transient = unsafe { ManuallyDrop::new(Arc::from_raw(self.ptr.as_ptr())) };
 
         // Expose the transient Arc to the callback, which may clone it if it wants
