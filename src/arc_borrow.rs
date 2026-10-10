@@ -24,9 +24,25 @@ use super::Arc;
 /// without needing to worry about where the `Arc<T>` is.
 #[derive(Debug, Eq, PartialEq)]
 #[repr(transparent)]
-pub struct ArcBorrow<'a, T: ?Sized + 'a>(pub(crate) NonNull<T>, pub(crate) PhantomData<&'a T>);
+pub struct ArcBorrow<'a, T: ?Sized + 'a>(
+    // Safety invariant: `0` is non-null, properly aligned, and points to the
+    // initialized `data: T` field of a live `ArcInner<T>` allocation that stays
+    // alive with strong count >= 1 for at least lifetime `'a`. `0` retains full
+    // provenance over the entire `ArcInner<T>` allocation (never derived from a
+    // narrowed `&T` reference).
+    pub(crate) NonNull<T>,
+    pub(crate) PhantomData<&'a T>,
+);
 
+// SAFETY:
+// `ArcBorrow<'a, T>` is semantically equivalent to `&'a Arc<T>`: sending it to
+// another thread permits reading `&'a T` (`T: Sync`) and cloning an owned
+// `Arc<T>` that may later be dropped on that thread (`T: Send`).
 unsafe impl<'a, T: ?Sized + Sync + Send> Send for ArcBorrow<'a, T> {}
+
+// SAFETY:
+// Sharing `&ArcBorrow<'a, T>` across threads permits copying `ArcBorrow<'a, T>`
+// and either dereferencing `&'a T` (`T: Sync`) or cloning an `Arc<T>` (`T: Send`).
 unsafe impl<'a, T: ?Sized + Sync + Send> Sync for ArcBorrow<'a, T> {}
 
 impl<'a, T: RefUnwindSafe + ?Sized> UnwindSafe for ArcBorrow<'a, T> {}
@@ -43,6 +59,14 @@ impl<'a, T: ?Sized> ArcBorrow<'a, T> {
     /// Clone this as an `Arc<T>`. This bumps the refcount.
     #[inline]
     pub fn clone_arc(&self) -> Arc<T> {
+        // SAFETY:
+        // By `ArcBorrow`'s field invariant, `self.0.as_ptr()` points to the
+        // `data` field of a live `ArcInner<T>` with full allocation provenance.
+        // Reconstructing `arc` via `Arc::from_raw` without incrementing the
+        // reference count is balanced by immediately cloning `arc` (which
+        // increments the strong count) and forgetting the clone via
+        // `mem::forget` (which cannot panic), leaving the returned `Arc<T>`
+        // with its own incremented strong reference.
         let arc = unsafe { Arc::from_raw(self.0.as_ptr()) };
         // addref it!
         mem::forget(arc.clone());
@@ -62,13 +86,20 @@ impl<'a, T: ?Sized> ArcBorrow<'a, T> {
     /// e.g. if we obtain such a pointer over FFI
     ///
     /// # Safety
-    /// - The pointer to `T` must have come from a Triomphe `Arc`, `UniqueArc`, or `ArcBorrow`.
+    /// - The pointer to `T` must have come from a Triomphe `Arc`, `UniqueArc`, or `ArcBorrow`
+    ///   that remains live (strong count >= 1) for the entire lifetime `'a`, and `T` must not
+    ///   be mutably accessed for the duration of `'a`.
     /// - The pointer to `T` must have full provenance over the `Arc`, `UniqueArc`, or `ArcBorrow`,
     ///   in particular it must not have been derived from a `&T` reference, as references immediately
     ///   lose all provenance over the adjacent reference counts. Triomphe's `Arc` and `ArcBorrow`
     ///   offer direct APIs for obtaining such a pointer: [`Arc::as_ptr`], [`Arc::into_raw`], and [`ArcBorrow::to_raw`].
     #[inline]
     pub const unsafe fn from_ptr(ptr: *const T) -> Self {
+        // SAFETY:
+        // By this function's `# Safety` precondition, `ptr` came from a live
+        // `Arc`, `UniqueArc`, or `ArcBorrow` (and is therefore non-null and
+        // aligned for `T`), remains live for `'a`, and retains full provenance
+        // over the `ArcInner<T>` allocation.
         unsafe { ArcBorrow(NonNull::new_unchecked(ptr as *mut T), PhantomData) }
     }
 
@@ -100,6 +131,13 @@ impl<'a, T: ?Sized> ArcBorrow<'a, T> {
         F: FnOnce(&Arc<T>) -> U,
     {
         // Synthesize transient Arc, which never touches the refcount.
+        //
+        // SAFETY:
+        // By `ArcBorrow`'s field invariant, `self.0.as_ptr()` points to the
+        // `data` field of a live `ArcInner<T>` with full allocation provenance
+        // for at least `'a`. Wrapping the reconstructed `Arc<T>` in
+        // `ManuallyDrop` ensures the borrowed strong reference count is not
+        // decremented when `with_arc` returns or if `f` unwinds.
         let transient = unsafe { ManuallyDrop::new(Arc::from_raw(self.0.as_ptr())) };
 
         // Expose the transient Arc to the callback, which may clone it if it wants
@@ -111,6 +149,10 @@ impl<'a, T: ?Sized> ArcBorrow<'a, T> {
     /// self, which is incompatible with the signature of the Deref trait.
     #[inline]
     pub const fn get(&self) -> &'a T {
+        // SAFETY:
+        // By `ArcBorrow`'s field invariant, `self.0` is non-null, aligned, and
+        // points to an initialized `T` in an `ArcInner<T>` allocation that
+        // remains live and immutably shared for `'a`.
         unsafe { &*self.0.as_ptr() }
     }
 }
@@ -124,12 +166,12 @@ impl<'a, T: ?Sized> Deref for ArcBorrow<'a, T> {
     }
 }
 
-// Safety:
-// This implementation must guarantee that it is sound to call replace_ptr with an unsized variant
-// of the pointer retuned in `as_sized_ptr`. We leverage unsizing the contained reference. This
-// continues to point to the data of an ArcInner. The reference count remains untouched which is
-// correct since the number of owners did not change. This implies the returned instance fulfills
-// its safety invariants.
+// SAFETY:
+// This implementation must guarantee that it is sound to call `replace_ptr` with an unsized variant
+// of the pointer returned in `as_sized_ptr`. By `CoerciblePtr::replace_ptr`'s contract, `new` has
+// the same address and provenance as `self.0` with unsized metadata for `U`. This continues to
+// point to the `data` field of the same live `ArcInner` for `'lt`, and the reference count remains
+// untouched since the number of owners did not change.
 #[cfg(feature = "unsize")]
 unsafe impl<'lt, T: 'lt, U: ?Sized + 'lt> unsize::CoerciblePtr<U> for ArcBorrow<'lt, T> {
     type Pointee = T;
@@ -141,8 +183,12 @@ unsafe impl<'lt, T: 'lt, U: ?Sized + 'lt> unsize::CoerciblePtr<U> for ArcBorrow<
 
     unsafe fn replace_ptr(self, new: *mut U) -> ArcBorrow<'lt, U> {
         let inner = ManuallyDrop::new(self);
-        // Safety: backed by the same Arc that backed `self`.
-        ArcBorrow(inner.0.replace_ptr(new), PhantomData)
+        // SAFETY:
+        // By `CoerciblePtr::replace_ptr`'s contract, `new` is derived from
+        // `self.as_sized_ptr()` via unsizing coercion, so it is non-null and
+        // backed by the same live `ArcInner` allocation for `'lt` with full
+        // provenance preserved.
+        ArcBorrow(unsafe { inner.0.replace_ptr(new) }, PhantomData)
     }
 }
 
