@@ -11,7 +11,7 @@ use core::ptr::{self, addr_of_mut};
 use serde::{Deserialize, Serialize};
 
 use crate::iterator_as_exact_size_iterator::IteratorAsExactSizeIterator;
-use crate::{mdref, AllocError, HeaderSlice};
+use crate::{AllocError, HeaderSlice, mdref};
 
 use super::{Arc, ArcInner};
 
@@ -145,11 +145,13 @@ impl<T: ?Sized> UniqueArc<T> {
     ///
     /// The given `Arc` must have a reference count of exactly one
     pub(crate) unsafe fn from_arc_ref(arc: &mut Arc<T>) -> &mut Self {
-        debug_assert_eq!(Arc::count(arc), 1);
+        unsafe {
+            debug_assert_eq!(Arc::count(arc), 1);
 
-        // Safety: caller guarantees that `arc` is unique,
-        //         `UniqueArc` is `repr(transparent)`
-        &mut *(arc as *mut Arc<T> as *mut UniqueArc<T>)
+            // Safety: caller guarantees that `arc` is unique,
+            //         `UniqueArc` is `repr(transparent)`
+            &mut *(arc as *mut Arc<T> as *mut UniqueArc<T>)
+        }
     }
 }
 
@@ -218,7 +220,7 @@ impl<T> UniqueArc<[MaybeUninit<T>]> {
     /// Must initialize all fields before calling this function.
     #[inline]
     pub const unsafe fn assume_init_slice(this: Self) -> UniqueArc<[T]> {
-        UniqueArc(this.shareable().assume_init())
+        unsafe { UniqueArc(this.shareable().assume_init()) }
     }
 }
 
@@ -335,9 +337,11 @@ unsafe impl<T, U: ?Sized> unsize::CoerciblePtr<U> for UniqueArc<T> {
     }
 
     unsafe fn replace_ptr(self, new: *mut U) -> UniqueArc<U> {
-        // Dispatch to the contained field, work around conflict of destructuring and Drop.
-        let inner = ManuallyDrop::new(self);
-        UniqueArc(ptr::read(&inner.0).replace_ptr(new))
+        unsafe {
+            // Dispatch to the contained field, work around conflict of destructuring and Drop.
+            let inner = ManuallyDrop::new(self);
+            UniqueArc(ptr::read(&inner.0).replace_ptr(new))
+        }
     }
 }
 
