@@ -11,7 +11,7 @@ use core::ptr;
 
 use super::{Arc, ArcInner, HeaderSlice, HeaderSliceWithLengthProtected, HeaderWithLength};
 use crate::header::HeaderSliceWithLengthUnchecked;
-use crate::{mdref, AllocError};
+use crate::{AllocError, mdref};
 
 /// A "thin" `Arc` containing dynamically sized data
 ///
@@ -224,9 +224,11 @@ impl<H, T> ThinArc<H, T> {
     /// even if the returned ThinArc is never accessed.
     #[inline]
     pub const unsafe fn from_raw(ptr: *const c_void) -> Self {
-        Self {
-            ptr: ptr::NonNull::new_unchecked(ptr as *mut c_void).cast(),
-            phantom: PhantomData,
+        unsafe {
+            Self {
+                ptr: ptr::NonNull::new_unchecked(ptr as *mut c_void).cast(),
+                phantom: PhantomData,
+            }
         }
     }
 

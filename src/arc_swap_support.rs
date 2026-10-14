@@ -18,7 +18,7 @@ unsafe impl<H, T> RefCnt for ThinArc<H, T> {
 
     #[inline]
     unsafe fn from_ptr(ptr: *const Self::Base) -> Self {
-        ThinArc::from_raw(ptr)
+        unsafe { ThinArc::from_raw(ptr) }
     }
 }
 
@@ -37,6 +37,6 @@ unsafe impl<T> RefCnt for Arc<T> {
 
     #[inline]
     unsafe fn from_ptr(ptr: *const Self::Base) -> Self {
-        Arc::from_raw(ptr)
+        unsafe { Arc::from_raw(ptr) }
     }
 }
