@@ -195,7 +195,9 @@ impl<T> Arc<T> {
     pub fn try_unwrap(this: Self) -> Result<T, Self> {
         Self::try_unique(this).map(UniqueArc::into_inner)
     }
+}
 
+impl<T, A: Allocator> Arc<T, A> {
     /// Converts the `Arc` to `UniqueArc` if the `Arc` has exactly one strong reference.
     ///
     /// Otherwise, `None` is returned and the `Arc` is dropped.
@@ -231,7 +233,7 @@ impl<T> Arc<T> {
     /// // The result could also be `(None, None)` if the threads called
     /// // `Arc::try_unique(x).ok()` and `Arc::try_unique(y).ok()` instead.
     /// ```
-    pub fn into_unique(this: Self) -> Option<UniqueArc<T>> {
+    pub fn into_unique(this: Self) -> Option<UniqueArc<T, A>> {
         // Prevent ourselves from being dropped in avoid clashing with the existing drop logic.
         let this = ManuallyDrop::new(this);
 
@@ -613,7 +615,9 @@ impl<T> Arc<MaybeUninit<T>> {
     pub fn write(&mut self, val: T) -> &mut T {
         UniqueArc::write(must_be_unique(self), val)
     }
+}
 
+impl<T, A: Allocator> Arc<MaybeUninit<T>, A> {
     /// Obtain a mutable pointer to the stored `MaybeUninit<T>`.
     #[inline]
     pub const fn as_mut_ptr(&mut self) -> *mut MaybeUninit<T> {
@@ -624,7 +628,7 @@ impl<T> Arc<MaybeUninit<T>> {
     ///
     /// Must initialize all fields before calling this function.
     #[inline]
-    pub const unsafe fn assume_init(self) -> Arc<T> {
+    pub const unsafe fn assume_init(self) -> Arc<T, A> {
         unsafe {
             let this = ManuallyDrop::new(self);
             Arc::from_raw_inner(mdref(&this).ptr().cast())
@@ -654,12 +658,14 @@ impl<T> Arc<[MaybeUninit<T>]> {
     pub fn as_mut_slice(&mut self) -> &mut [MaybeUninit<T>] {
         must_be_unique(self)
     }
+}
 
+impl<T, A: Allocator> Arc<[MaybeUninit<T>], A> {
     /// # Safety
     ///
     /// Must initialize all fields before calling this function.
     #[inline]
-    pub const unsafe fn assume_init(self) -> Arc<[T]> {
+    pub const unsafe fn assume_init(self) -> Arc<[T], A> {
         unsafe {
             let this = ManuallyDrop::new(self);
             Arc::from_raw_inner(mdref(&this).ptr() as _)
@@ -744,9 +750,7 @@ impl<T: Clone, A: Allocator + Clone> Arc<T, A> {
             &mut (*this.p.as_ptr()).data
         }
     }
-}
 
-impl<T: Clone> Arc<T> {
     /// Makes a `UniqueArc` from an `Arc`, cloning if necessary.
     ///
     /// If this `Arc` is uniquely owned, `make_unique()` will provide a `UniqueArc`
@@ -757,18 +761,17 @@ impl<T: Clone> Arc<T> {
     /// This is useful for implementing copy-on-write schemes where you wish to
     /// avoid copying things if your `Arc` is not shared.
     #[inline]
-    pub fn make_unique(this: &mut Self) -> &mut UniqueArc<T> {
-        if !this.is_unique() {
-            // Another pointer exists; clone
-            *this = Arc::new(T::clone(this));
-        }
+    pub fn make_unique(this: &mut Self) -> &mut UniqueArc<T, A> {
+        Arc::make_mut(this);
 
         unsafe {
-            // Safety: this is either unique or just created (which is also unique)
+            // Safety: `make_mut` left this unique (or freshly cloned, which is also unique)
             UniqueArc::from_arc_ref(this)
         }
     }
+}
 
+impl<T: Clone> Arc<T> {
     /// If we have the only reference to `T` then unwrap it. Otherwise, clone `T` and return the clone.
     ///
     /// Assuming `arc_t` is of type `Arc<T>`, this function is functionally equivalent to `(*arc_t).clone()`, but will avoid cloning the inner value where possible.
@@ -792,9 +795,9 @@ impl<T: ?Sized, A: Allocator> Arc<T, A> {
     }
 }
 
-impl<T: ?Sized> Arc<T> {
+impl<T: ?Sized, A: Allocator> Arc<T, A> {
     /// Provides unique access to the arc _if_ the `Arc` is uniquely owned.
-    pub fn get_unique(this: &mut Self) -> Option<&mut UniqueArc<T>> {
+    pub fn get_unique(this: &mut Self) -> Option<&mut UniqueArc<T, A>> {
         Self::try_as_unique(this).ok()
     }
 }
@@ -814,7 +817,7 @@ impl<T: ?Sized, A: Allocator> Arc<T, A> {
     }
 }
 
-impl<T: ?Sized> Arc<T> {
+impl<T: ?Sized, A: Allocator> Arc<T, A> {
     /// Returns a [`UniqueArc`] if the [`Arc`] has exactly one strong reference.
     ///
     /// Otherwise, an [`Err`] is returned with the same [`Arc`] that was
@@ -835,7 +838,7 @@ impl<T: ?Sized> Arc<T> {
     ///     4,
     /// );
     /// ```
-    pub fn try_unique(this: Self) -> Result<UniqueArc<T>, Self> {
+    pub fn try_unique(this: Self) -> Result<UniqueArc<T, A>, Self> {
         if this.is_unique() {
             // Safety: The current arc is unique and making a `UniqueArc`
             //         from it is sound
@@ -845,7 +848,7 @@ impl<T: ?Sized> Arc<T> {
         }
     }
 
-    pub(crate) fn try_as_unique(this: &mut Self) -> Result<&mut UniqueArc<T>, &mut Self> {
+    pub(crate) fn try_as_unique(this: &mut Self) -> Result<&mut UniqueArc<T, A>, &mut Self> {
         if this.is_unique() {
             // Safety: The current arc is unique and making a `UniqueArc`
             //         from it is sound
@@ -1143,8 +1146,23 @@ mod tests {
         let fallible = Arc::try_new_in(23, CountingAllocator).unwrap();
         drop(fallible);
 
-        assert_eq!(ALLOCATIONS.load(Ordering::Relaxed), allocations + 2);
-        assert_eq!(DEALLOCATIONS.load(Ordering::Relaxed), deallocations + 2);
+        let mut unique = Arc::try_unique(Arc::new_in(31, CountingAllocator)).unwrap();
+        *unique += 1;
+        let shared = unique.shareable();
+        assert_eq!(*shared, 32);
+        let unique = crate::UniqueArc::try_from(shared).unwrap();
+        assert_eq!(*unique, 32);
+        drop(unique);
+
+        let unique = Arc::try_unique(Arc::new_in(37, CountingAllocator)).unwrap();
+        drop(unique);
+
+        let unique = Arc::into_unique(Arc::new_in(41, CountingAllocator)).unwrap();
+        assert_eq!(*unique, 41);
+        drop(unique);
+
+        assert_eq!(ALLOCATIONS.load(Ordering::Relaxed), allocations + 5);
+        assert_eq!(DEALLOCATIONS.load(Ordering::Relaxed), deallocations + 5);
     }
 
     #[test]
