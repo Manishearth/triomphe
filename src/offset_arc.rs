@@ -300,7 +300,7 @@ mod tests {
     #[cfg(feature = "std")]
     fn safe_offset_arc_make_mut_reentrant_drop_panic_uaf() {
         use core::sync::atomic::{AtomicBool, Ordering};
-        use std::panic::{catch_unwind, AssertUnwindSafe};
+        use std::panic::{AssertUnwindSafe, catch_unwind};
         use std::sync::{Arc as StdArc, Mutex};
 
         struct ReentrantClone {
