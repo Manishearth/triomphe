@@ -188,7 +188,7 @@ impl<A, B> Drop for ArcUnion<A, B> {
             // reference owned by `*self`, which is being dropped and will not
             // be accessed again.
             ArcUnionBorrow::First(x) => unsafe {
-                let _ = Arc::from_raw(ArcBorrow::to_raw(&x));
+                let _ = Arc::<A>::from_raw(ArcBorrow::to_raw(&x));
             },
             // SAFETY:
             // Same as the `First` arm for `ArcInner<B>`: `ArcBorrow::to_raw(&x)`
@@ -196,7 +196,7 @@ impl<A, B> Drop for ArcUnion<A, B> {
             // and dropping the reconstructed `Arc<B>` consumes the strong
             // reference owned by `*self`.
             ArcUnionBorrow::Second(x) => unsafe {
-                let _ = Arc::from_raw(ArcBorrow::to_raw(&x));
+                let _ = Arc::<B>::from_raw(ArcBorrow::to_raw(&x));
             },
         }
     }

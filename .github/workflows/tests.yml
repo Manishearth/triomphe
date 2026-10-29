@@ -8,8 +8,10 @@ jobs:
     strategy:
       matrix:
         rust:
-          - stable
-          - 1.85
+          # MSRV is 1.100 (stable `Allocator`). rustup can't install `1.100` until it is
+          # released, and today's beta *is* 1.100, so test on beta for now.
+          # Once 1.100 ships, replace `beta` with `stable` and `1.100`.
+          - beta
           - nightly
     steps:
       - uses: actions/checkout@v4
