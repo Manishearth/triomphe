@@ -1,3 +1,6 @@
+use alloc::alloc::Global;
+use core::alloc::Allocator;
+use core::fmt;
 use core::marker::PhantomData;
 use core::mem;
 use core::mem::ManuallyDrop;
@@ -22,43 +25,64 @@ use super::Arc;
 ///
 /// `ArcBorrow` lets us deal with borrows of known-refcounted objects
 /// without needing to worry about where the `Arc<T>` is.
-#[derive(Debug, Eq, PartialEq)]
 #[repr(transparent)]
-pub struct ArcBorrow<'a, T: ?Sized + 'a>(
+pub struct ArcBorrow<'a, T: ?Sized + 'a, A: Allocator = Global>(
     // Safety invariant: `0` is non-null, properly aligned, and points to the
     // initialized `data: T` field of a live `ArcInner<T>` allocation that stays
     // alive with strong count >= 1 for at least lifetime `'a`. `0` retains full
     // provenance over the entire `ArcInner<T>` allocation (never derived from a
     // narrowed `&T` reference).
     pub(crate) NonNull<T>,
-    pub(crate) PhantomData<&'a T>,
+    pub(crate) PhantomData<(&'a T, A)>,
 );
+
+// Manual impls: deriving would add `A: Debug + PartialEq + Eq` bounds,
+// which `Global` doesn't satisfy.
+impl<'a, T: ?Sized + fmt::Debug, A: Allocator> fmt::Debug for ArcBorrow<'a, T, A> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("ArcBorrow")
+            .field(&self.0)
+            .field(&PhantomData::<&'a T>)
+            .finish()
+    }
+}
+
+impl<'a, T: ?Sized + PartialEq, A: Allocator> PartialEq for ArcBorrow<'a, T, A> {
+    fn eq(&self, other: &Self) -> bool {
+        core::ptr::eq(self.0.as_ptr(), other.0.as_ptr())
+    }
+}
+
+impl<'a, T: ?Sized + Eq, A: Allocator> Eq for ArcBorrow<'a, T, A> {}
 
 // SAFETY:
 // `ArcBorrow<'a, T>` is semantically equivalent to `&'a Arc<T>`: sending it to
 // another thread permits reading `&'a T` (`T: Sync`) and cloning an owned
 // `Arc<T>` that may later be dropped on that thread (`T: Send`).
-unsafe impl<'a, T: ?Sized + Sync + Send> Send for ArcBorrow<'a, T> {}
+unsafe impl<'a, T: ?Sized + Sync + Send, A: Allocator + Send + Sync> Send for ArcBorrow<'a, T, A> {}
 
 // SAFETY:
 // Sharing `&ArcBorrow<'a, T>` across threads permits copying `ArcBorrow<'a, T>`
 // and either dereferencing `&'a T` (`T: Sync`) or cloning an `Arc<T>` (`T: Send`).
-unsafe impl<'a, T: ?Sized + Sync + Send> Sync for ArcBorrow<'a, T> {}
+unsafe impl<'a, T: ?Sized + Sync + Send, A: Allocator + Send + Sync> Sync for ArcBorrow<'a, T, A> {}
 
-impl<'a, T: RefUnwindSafe + ?Sized> UnwindSafe for ArcBorrow<'a, T> {}
+impl<'a, T: RefUnwindSafe + ?Sized, A: Allocator + RefUnwindSafe> UnwindSafe
+    for ArcBorrow<'a, T, A>
+{
+}
 
-impl<'a, T: ?Sized> Copy for ArcBorrow<'a, T> {}
-impl<'a, T: ?Sized> Clone for ArcBorrow<'a, T> {
+impl<'a, T: ?Sized, A: Allocator> Copy for ArcBorrow<'a, T, A> {}
+impl<'a, T: ?Sized, A: Allocator> Clone for ArcBorrow<'a, T, A> {
     #[inline]
     fn clone(&self) -> Self {
         *self
     }
 }
 
-impl<'a, T: ?Sized> ArcBorrow<'a, T> {
+impl<'a, T: ?Sized, A: Allocator> ArcBorrow<'a, T, A> {
     /// Clone this as an `Arc<T>`. This bumps the refcount.
     #[inline]
-    pub fn clone_arc(&self) -> Arc<T> {
+    pub fn clone_arc(&self) -> Arc<T, A> {
         // SAFETY:
         // By `ArcBorrow`'s field invariant, `self.0.as_ptr()` points to the
         // `data` field of a live `ArcInner<T>` with full allocation provenance.
@@ -67,7 +91,7 @@ impl<'a, T: ?Sized> ArcBorrow<'a, T> {
         // increments the strong count) and forgetting the clone via
         // `mem::forget` (which cannot panic), leaving the returned `Arc<T>`
         // with its own incremented strong reference.
-        let arc = unsafe { Arc::from_raw(self.0.as_ptr()) };
+        let arc = unsafe { Arc::<T, A>::from_raw(self.0.as_ptr()) };
         // addref it!
         mem::forget(arc.clone());
         arc
@@ -128,7 +152,7 @@ impl<'a, T: ?Sized> ArcBorrow<'a, T> {
     #[inline]
     pub fn with_arc<F, U>(&self, f: F) -> U
     where
-        F: FnOnce(&Arc<T>) -> U,
+        F: FnOnce(&Arc<T, A>) -> U,
     {
         // Synthesize transient Arc, which never touches the refcount.
         //
@@ -157,7 +181,7 @@ impl<'a, T: ?Sized> ArcBorrow<'a, T> {
     }
 }
 
-impl<'a, T: ?Sized> Deref for ArcBorrow<'a, T> {
+impl<'a, T: ?Sized, A: Allocator> Deref for ArcBorrow<'a, T, A> {
     type Target = T;
 
     #[inline]
@@ -173,15 +197,17 @@ impl<'a, T: ?Sized> Deref for ArcBorrow<'a, T> {
 // point to the `data` field of the same live `ArcInner` for `'lt`, and the reference count remains
 // untouched since the number of owners did not change.
 #[cfg(feature = "unsize")]
-unsafe impl<'lt, T: 'lt, U: ?Sized + 'lt> unsize::CoerciblePtr<U> for ArcBorrow<'lt, T> {
+unsafe impl<'lt, T: 'lt, U: ?Sized + 'lt, A: Allocator> unsize::CoerciblePtr<U>
+    for ArcBorrow<'lt, T, A>
+{
     type Pointee = T;
-    type Output = ArcBorrow<'lt, U>;
+    type Output = ArcBorrow<'lt, U, A>;
 
     fn as_sized_ptr(&mut self) -> *mut T {
         self.0.as_ptr()
     }
 
-    unsafe fn replace_ptr(self, new: *mut U) -> ArcBorrow<'lt, U> {
+    unsafe fn replace_ptr(self, new: *mut U) -> ArcBorrow<'lt, U, A> {
         let inner = ManuallyDrop::new(self);
         // SAFETY:
         // By `CoerciblePtr::replace_ptr`'s contract, `new` is derived from

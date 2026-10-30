@@ -1,3 +1,5 @@
+use alloc::alloc::Global;
+use core::alloc::Allocator;
 use core::fmt;
 use core::hash::Hash;
 use core::marker::PhantomData;
@@ -31,14 +33,14 @@ use super::{Arc, ArcBorrow};
 /// and wish for C++ to be able to read the data behind the `Arc` without incurring
 /// an FFI call overhead.
 #[repr(transparent)]
-pub struct OffsetArc<T: ?Sized> {
+pub struct OffsetArc<T: ?Sized, A: Allocator = Global> {
     // Safety invariant: `ptr` is non-null, properly aligned, and points to the
     // initialized `data: T` field of a live `ArcInner<T>` heap allocation. It
     // retains full provenance over the entire `ArcInner<T>` allocation (as
     // obtained from `Arc::into_raw`), and this `OffsetArc` owns one strong
     // reference count on that `ArcInner<T>`.
     pub(crate) ptr: ptr::NonNull<T>,
-    pub(crate) phantom: PhantomData<T>,
+    pub(crate) phantom: PhantomData<(A, T)>,
 }
 
 // SAFETY:
@@ -46,16 +48,16 @@ pub struct OffsetArc<T: ?Sized> {
 // moving it across threads transfers ownership of one strong reference to the
 // underlying `ArcInner<T>`, which may share `T` across threads (`T: Sync`) and
 // drop `T` on the last thread (`T: Send`).
-unsafe impl<T: ?Sized + Sync + Send> Send for OffsetArc<T> {}
+unsafe impl<T: ?Sized + Sync + Send, A: Allocator + Send + Sync> Send for OffsetArc<T, A> {}
 
 // SAFETY:
 // Sharing `&OffsetArc<T>` across threads only provides shared access (`&T`) to
 // the payload (`T: Sync`), unless cloned and dropped on another thread (`T: Send`).
-unsafe impl<T: ?Sized + Sync + Send> Sync for OffsetArc<T> {}
+unsafe impl<T: ?Sized + Sync + Send, A: Allocator + Send + Sync> Sync for OffsetArc<T, A> {}
 
-impl<T: ?Sized + RefUnwindSafe> UnwindSafe for OffsetArc<T> {}
+impl<T: ?Sized + RefUnwindSafe, A: Allocator + RefUnwindSafe> UnwindSafe for OffsetArc<T, A> {}
 
-impl<T: ?Sized> Deref for OffsetArc<T> {
+impl<T: ?Sized, A: Allocator> Deref for OffsetArc<T, A> {
     type Target = T;
 
     #[inline]
@@ -70,60 +72,60 @@ impl<T: ?Sized> Deref for OffsetArc<T> {
     }
 }
 
-impl<T: ?Sized> Clone for OffsetArc<T> {
+impl<T: ?Sized, A: Allocator> Clone for OffsetArc<T, A> {
     #[inline]
     fn clone(&self) -> Self {
         Arc::into_raw_offset(self.clone_arc())
     }
 }
 
-impl<T: ?Sized> Drop for OffsetArc<T> {
+impl<T: ?Sized, A: Allocator> Drop for OffsetArc<T, A> {
     fn drop(&mut self) {
-        let _ = Arc::from_raw_offset(OffsetArc {
+        let _ = Arc::<T, A>::from_raw_offset(OffsetArc {
             ptr: self.ptr,
             phantom: PhantomData,
         });
     }
 }
 
-impl<T: ?Sized + fmt::Debug> fmt::Debug for OffsetArc<T> {
+impl<T: ?Sized + fmt::Debug, A: Allocator> fmt::Debug for OffsetArc<T, A> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         fmt::Debug::fmt(&**self, f)
     }
 }
 
-impl<T: ?Sized + PartialEq> PartialEq for OffsetArc<T> {
-    fn eq(&self, other: &OffsetArc<T>) -> bool {
+impl<T: ?Sized + PartialEq, A: Allocator> PartialEq for OffsetArc<T, A> {
+    fn eq(&self, other: &OffsetArc<T, A>) -> bool {
         *(*self) == *(*other)
     }
 
     #[allow(clippy::partialeq_ne_impl)]
-    fn ne(&self, other: &OffsetArc<T>) -> bool {
+    fn ne(&self, other: &OffsetArc<T, A>) -> bool {
         *(*self) != *(*other)
     }
 }
 
-impl<T: ?Sized + Eq> Eq for OffsetArc<T> {}
+impl<T: ?Sized + Eq, A: Allocator> Eq for OffsetArc<T, A> {}
 
-impl<T: ?Sized + PartialOrd> PartialOrd for OffsetArc<T> {
+impl<T: ?Sized + PartialOrd, A: Allocator> PartialOrd for OffsetArc<T, A> {
     fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
         (**self).partial_cmp(&**other)
     }
 }
 
-impl<T: ?Sized + Ord> Ord for OffsetArc<T> {
+impl<T: ?Sized + Ord, A: Allocator> Ord for OffsetArc<T, A> {
     fn cmp(&self, other: &Self) -> core::cmp::Ordering {
         (**self).cmp(&**other)
     }
 }
 
-impl<T: ?Sized + Hash> Hash for OffsetArc<T> {
+impl<T: ?Sized + Hash, A: Allocator> Hash for OffsetArc<T, A> {
     fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
         (**self).hash(state)
     }
 }
 
-impl<T> OffsetArc<T> {
+impl<T, A: Allocator> OffsetArc<T, A> {
     /// If uniquely owned, provide a mutable reference
     /// Else create a copy, and mutate that
     ///
@@ -132,20 +134,21 @@ impl<T> OffsetArc<T> {
     pub fn make_mut(&mut self) -> &mut T
     where
         T: Clone,
+        A: Clone,
     {
         // It is possible for `Arc::make_mut` to replace the Arc, or panic during
         // cloning or dropping the replaced old allocation.
         // We use a drop guard to ensure `self` is always updated to point to the current Arc,
         // even if a panic unwinds out of `Arc::make_mut`.
-        struct DropGuard<'a, T> {
+        struct DropGuard<'a, T, A: Allocator> {
             // Safety invariant: `arc` is initialized and owns the active strong
             // reference originally moved out of `*this` (or its replacement
             // installed by `Arc::make_mut`) until `DropGuard::drop` takes it.
-            arc: ManuallyDrop<Arc<T>>,
-            this: &'a mut OffsetArc<T>,
+            arc: ManuallyDrop<Arc<T, A>>,
+            this: &'a mut OffsetArc<T, A>,
         }
 
-        impl<'a, T> Drop for DropGuard<'a, T> {
+        impl<'a, T, A: Allocator> Drop for DropGuard<'a, T, A> {
             fn drop(&mut self) {
                 // SAFETY:
                 // 1. `ManuallyDrop::take(&mut self.arc)`: By `DropGuard`'s
@@ -199,13 +202,13 @@ impl<T> OffsetArc<T> {
     }
 }
 
-impl<T: ?Sized> OffsetArc<T> {
+impl<T: ?Sized, A: Allocator> OffsetArc<T, A> {
     /// Temporarily converts |self| into a bonafide Arc and exposes it to the
     /// provided callback. The refcount is not modified.
     #[inline]
     pub fn with_arc<F, U>(&self, f: F) -> U
     where
-        F: FnOnce(&Arc<T>) -> U,
+        F: FnOnce(&Arc<T, A>) -> U,
     {
         // Synthesize transient Arc, which never touches the refcount of the ArcInner.
         //
@@ -224,14 +227,14 @@ impl<T: ?Sized> OffsetArc<T> {
 
     /// Clone it as an `Arc`
     #[inline]
-    pub fn clone_arc(&self) -> Arc<T> {
+    pub fn clone_arc(&self) -> Arc<T, A> {
         OffsetArc::with_arc(self, |a| a.clone())
     }
 
     /// Produce a pointer to the data that can be converted back
     /// to an `Arc`
     #[inline]
-    pub const fn borrow_arc(&self) -> ArcBorrow<'_, T> {
+    pub const fn borrow_arc(&self) -> ArcBorrow<'_, T, A> {
         ArcBorrow(self.ptr, PhantomData)
     }
 
