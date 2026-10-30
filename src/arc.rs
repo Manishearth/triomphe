@@ -484,13 +484,29 @@ impl<T: ?Sized> Arc<T> {
         value_layout: Layout,
         mem_to_arcinner: impl FnOnce(*mut u8) -> *mut ArcInner<T>,
     ) -> Result<NonNull<ArcInner<T>>, AllocError> {
+        // Safety: same conditions as `try_allocate_for_layout_in`.
+        unsafe { Self::try_allocate_for_layout_in(value_layout, Global, mem_to_arcinner) }
+    }
+}
+
+impl<T: ?Sized, A: Allocator> Arc<T, A> {
+    /// Version of [`Arc::try_allocate_for_layout`] that allocates with `allocator`.
+    ///
+    /// ## Safety
+    ///
+    /// Same as [`Arc::try_allocate_for_layout`].
+    pub(super) unsafe fn try_allocate_for_layout_in(
+        value_layout: Layout,
+        allocator: A,
+        mem_to_arcinner: impl FnOnce(*mut u8) -> *mut ArcInner<T, A>,
+    ) -> Result<NonNull<ArcInner<T, A>>, AllocError> {
         // Safety
 
         // 1. Caller ensures that value_layout is the layout of T
         // 2. ArcInner is repr(C)
-        // 3. Thus, full_layout is layout of ArcInner<T>
+        // 3. Thus, full_layout is layout of ArcInner<T, A>
         let full_layout = Layout::new::<atomic::AtomicUsize>()
-            .extend(Layout::new::<Global>())
+            .extend(Layout::new::<A>())
             .expect("layout too big")
             .0
             .extend(value_layout)
@@ -498,37 +514,55 @@ impl<T: ?Sized> Arc<T> {
             .0
             .pad_to_align();
 
+        // ArcInner never has a zero size
+        let ptr = allocator
+            .allocate(full_layout)
+            .map_err(|_| AllocError)?
+            .cast::<u8>()
+            .as_ptr();
         unsafe {
-            // ArcInner never has a zero size
-            let ptr = alloc::alloc::alloc(full_layout);
-            if ptr.is_null() {
-                Err(AllocError)
-            } else {
-                // Form the ArcInner pointer by adding type/metadata
-                // mem_to_arcinner keeps the same pointer (caller safety condition)
-                let inner_ptr = mem_to_arcinner(ptr);
-                // Initialize the reference count
-                ptr::write(
-                    addr_of_mut!((*inner_ptr).count),
-                    atomic::AtomicUsize::new(1),
-                );
-                ptr::write(addr_of_mut!((*inner_ptr).allocator), Global);
-                // Pointer stays non-null
-                Ok(NonNull::new_unchecked(inner_ptr))
-            }
+            // Form the ArcInner pointer by adding type/metadata
+            // mem_to_arcinner keeps the same pointer (caller safety condition)
+            let inner_ptr = mem_to_arcinner(ptr);
+            // Initialize the reference count
+            ptr::write(
+                addr_of_mut!((*inner_ptr).count),
+                atomic::AtomicUsize::new(1),
+            );
+            ptr::write(addr_of_mut!((*inner_ptr).allocator), allocator);
+            // Pointer stays non-null
+            Ok(NonNull::new_unchecked(inner_ptr))
         }
     }
 }
 
 impl<H, T> Arc<HeaderSlice<H, [T]>> {
+    /// [`Arc::allocate_for_header_and_slice_in`] with the global allocator.
+    pub(super) fn allocate_for_header_and_slice(
+        len: usize,
+    ) -> NonNull<ArcInner<HeaderSlice<H, [T]>>> {
+        Self::allocate_for_header_and_slice_in(len, Global)
+    }
+
+    /// [`Arc::try_allocate_for_header_and_slice_in`] with the global allocator.
+    #[allow(clippy::type_complexity)]
+    pub(super) fn try_allocate_for_header_and_slice(
+        len: usize,
+    ) -> Result<NonNull<ArcInner<HeaderSlice<H, [T]>>>, AllocError> {
+        Self::try_allocate_for_header_and_slice_in(len, Global)
+    }
+}
+
+impl<H, T, A: Allocator> Arc<HeaderSlice<H, [T]>, A> {
     /// Allocates the arc inner for a slice DST type.
     ///
     /// The `len` argument provides the length of the tail. This function initializes the
     /// reference count, but the caller is responsible for initializing the data inside
     /// `inner_ptr.data` where `inner_ptr` is the pointer returned by this function.
-    pub(super) fn allocate_for_header_and_slice(
+    pub(super) fn allocate_for_header_and_slice_in(
         len: usize,
-    ) -> NonNull<ArcInner<HeaderSlice<H, [T]>>> {
+        allocator: A,
+    ) -> NonNull<ArcInner<HeaderSlice<H, [T]>, A>> {
         // Recompute the full `ArcInner` layout so that we can preserve the
         // historical "Requested size too big" / "layout too big" panics and
         // pass the actually-attempted layout to `handle_alloc_error`.
@@ -540,13 +574,13 @@ impl<H, T> Arc<HeaderSlice<H, [T]>> {
             .expect("Requested size too big")
             .0
             .pad_to_align();
-        let full_layout = Layout::new::<ArcInner<()>>()
+        let full_layout = Layout::new::<ArcInner<(), A>>()
             .extend(value_layout)
             .expect("layout too big")
             .0
             .pad_to_align();
 
-        match Self::try_allocate_for_header_and_slice(len) {
+        match Self::try_allocate_for_header_and_slice_in(len, allocator) {
             Ok(p) => p,
             // The layout was already validated above, so the only way the
             // fallible version can fail here is an actual allocation failure.
@@ -554,14 +588,15 @@ impl<H, T> Arc<HeaderSlice<H, [T]>> {
         }
     }
 
-    /// Fallible version of [`Arc::allocate_for_header_and_slice`].
+    /// Fallible version of [`Arc::allocate_for_header_and_slice_in`].
     ///
     /// Returns `Err(AllocError)` on either layout overflow or allocation
     /// failure, instead of panicking or aborting.
     #[allow(clippy::type_complexity)]
-    pub(super) fn try_allocate_for_header_and_slice(
+    pub(super) fn try_allocate_for_header_and_slice_in(
         len: usize,
-    ) -> Result<NonNull<ArcInner<HeaderSlice<H, [T]>>>, AllocError> {
+        allocator: A,
+    ) -> Result<NonNull<ArcInner<HeaderSlice<H, [T]>, A>>, AllocError> {
         let layout = Layout::array::<T>(len)
             .and_then(|tail_layout| {
                 let header_layout = Layout::new::<H>();
@@ -575,7 +610,7 @@ impl<H, T> Arc<HeaderSlice<H, [T]>> {
             // Safety:
             // - the provided closure does not change the pointer (except for meta & type)
             // - the provided layout is valid for `HeaderSlice<H, [T]>`
-            Arc::try_allocate_for_layout(layout, |mem| {
+            Arc::try_allocate_for_layout_in(layout, allocator, |mem| {
                 // Synthesize the fat pointer. We do this by claiming we have a direct
                 // pointer to a [T], and then changing the type of the borrow. The key
                 // point here is that the length portion of the fat pointer applies
@@ -583,7 +618,7 @@ impl<H, T> Arc<HeaderSlice<H, [T]>> {
                 // the type, so the value will be the same whether it points to a [T]
                 // or something else with a [T] as its last member.
                 let fake_slice = ptr::slice_from_raw_parts_mut(mem as *mut T, len);
-                fake_slice as *mut ArcInner<HeaderSlice<H, [T]>>
+                fake_slice as *mut ArcInner<HeaderSlice<H, [T]>, A>
             })
         }
     }

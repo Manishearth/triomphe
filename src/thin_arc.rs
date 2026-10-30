@@ -208,6 +208,30 @@ impl<H, T> ThinArc<H, T, Global> {
 }
 
 impl<H, T, A: Allocator> ThinArc<H, T, A> {
+    /// Version of [`ThinArc::from_header_and_iter`] that allocates with `allocator`.
+    pub fn from_header_and_iter_in<I>(header: H, items: I, allocator: A) -> Self
+    where
+        I: Iterator<Item = T> + ExactSizeIterator,
+    {
+        let header = HeaderWithLength::new(header, items.len());
+        Arc::into_thin(Arc::from_header_and_iter_in(header, items, allocator))
+    }
+
+    /// Version of [`ThinArc::try_from_header_and_iter`] that allocates with `allocator`.
+    pub fn try_from_header_and_iter_in<I>(
+        header: H,
+        items: I,
+        allocator: A,
+    ) -> Result<Self, AllocError>
+    where
+        I: Iterator<Item = T> + ExactSizeIterator,
+    {
+        let header = HeaderWithLength::new(header, items.len());
+        Ok(Arc::into_thin(Arc::try_from_header_and_iter_in(
+            header, items, allocator,
+        )?))
+    }
+
     /// Returns the address on the heap of the ThinArc itself -- not the T
     /// within it -- for memory reporting.
     #[inline]
