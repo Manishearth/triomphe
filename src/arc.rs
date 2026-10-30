@@ -1126,44 +1126,21 @@ fn must_be_unique<T: ?Sized>(arc: &mut Arc<T>) -> &mut UniqueArc<T> {
 #[cfg(test)]
 mod tests {
     use crate::arc::Arc;
-    use alloc::alloc::Global;
+    use crate::test_alloc::{CountingAllocator, Counts};
     use alloc::borrow::ToOwned;
     use alloc::string::String;
     use alloc::vec::Vec;
-    use core::alloc::{AllocError as CoreAllocError, Allocator, Layout};
     use core::iter::FromIterator;
     use core::mem::MaybeUninit;
-    use core::ptr::NonNull;
-    use core::sync::atomic::{AtomicUsize, Ordering};
     #[cfg(feature = "unsize")]
     use unsize::{CoerceUnsize, Coercion};
 
-    #[repr(align(64))]
-    #[derive(Clone, Copy)]
-    struct CountingAllocator;
-
-    static ALLOCATIONS: AtomicUsize = AtomicUsize::new(0);
-    static DEALLOCATIONS: AtomicUsize = AtomicUsize::new(0);
-
-    unsafe impl Allocator for CountingAllocator {
-        fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, CoreAllocError> {
-            Global.allocate(layout).inspect(|_| {
-                ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
-            })
-        }
-
-        unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
-            unsafe { Global.deallocate(ptr, layout) };
-            DEALLOCATIONS.fetch_add(1, Ordering::Relaxed);
-        }
-    }
-
     #[test]
     fn custom_allocator() {
-        let allocations = ALLOCATIONS.load(Ordering::Relaxed);
-        let deallocations = DEALLOCATIONS.load(Ordering::Relaxed);
+        let counts = Counts::default();
+        let alloc = CountingAllocator(&counts);
 
-        let mut arc = Arc::new_in(17, CountingAllocator);
+        let mut arc = Arc::new_in(17, alloc);
         assert_eq!(Arc::as_ptr(&arc) as usize % 64, 0);
         assert_eq!(Arc::count(&arc), 1);
         *Arc::get_mut(&mut arc).unwrap() = 19;
@@ -1174,37 +1151,24 @@ mod tests {
         let clone = unsafe { Arc::<_, CountingAllocator>::from_raw(raw) };
 
         drop(arc);
-        assert_eq!(DEALLOCATIONS.load(Ordering::Relaxed), deallocations);
+        assert_eq!(counts.get(), (1, 0));
         assert_eq!(*clone, 19);
         drop(clone);
 
-        let fallible = Arc::try_new_in(23, CountingAllocator).unwrap();
+        let fallible = Arc::try_new_in(23, alloc).unwrap();
         drop(fallible);
 
-        let mut unique = Arc::try_unique(Arc::new_in(31, CountingAllocator)).unwrap();
-        *unique += 1;
-        let shared = unique.shareable();
-        assert_eq!(*shared, 32);
-        let unique = crate::UniqueArc::try_from(shared).unwrap();
-        assert_eq!(*unique, 32);
-        drop(unique);
+        // A shared `make_mut` clones into a new allocation from the same allocator.
+        let mut shared = Arc::new_in(31, alloc);
+        let other = shared.clone();
+        *Arc::make_mut(&mut shared) += 1;
+        assert_eq!((*shared, *other), (32, 31));
+        drop((shared, other));
 
-        let unique = Arc::try_unique(Arc::new_in(37, CountingAllocator)).unwrap();
-        drop(unique);
+        let uninit = Arc::new_in(MaybeUninit::new(37), alloc);
+        assert_eq!(*unsafe { uninit.assume_init() }, 37);
 
-        let unique = Arc::into_unique(Arc::new_in(41, CountingAllocator)).unwrap();
-        assert_eq!(*unique, 41);
-        drop(unique);
-
-        let offset = Arc::into_raw_offset(Arc::new_in(43, CountingAllocator));
-        let cloned = offset.borrow_arc().clone_arc();
-        assert_eq!(Arc::count(&cloned), 2);
-        drop(offset);
-        assert_eq!(*cloned, 43);
-        drop(cloned);
-
-        assert_eq!(ALLOCATIONS.load(Ordering::Relaxed), allocations + 6);
-        assert_eq!(DEALLOCATIONS.load(Ordering::Relaxed), deallocations + 6);
+        assert_eq!(counts.get(), (5, 5));
     }
 
     #[test]

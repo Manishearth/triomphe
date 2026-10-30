@@ -80,3 +80,43 @@ const fn mdref<T>(v: &core::mem::ManuallyDrop<T>) -> &T {
     // and `&T` have identical layout and this reference cast is sound.
     unsafe { core::mem::transmute(v) }
 }
+
+#[cfg(test)]
+pub(crate) mod test_alloc {
+    use alloc::alloc::Global;
+    use core::alloc::{AllocError, Allocator, Layout};
+    use core::ptr::NonNull;
+    use core::sync::atomic::{AtomicUsize, Ordering::Relaxed};
+
+    /// Per-test allocation counters, so tests running in parallel don't interfere.
+    #[derive(Default)]
+    pub(crate) struct Counts {
+        allocs: AtomicUsize,
+        frees: AtomicUsize,
+    }
+
+    impl Counts {
+        /// Returns `(allocations, deallocations)`.
+        pub(crate) fn get(&self) -> (usize, usize) {
+            (self.allocs.load(Relaxed), self.frees.load(Relaxed))
+        }
+    }
+
+    /// A non-zero-sized, over-aligned allocator: it shifts `ArcInner::data` away from
+    /// its `Global` offset, so any pointer math that ignores the allocator breaks.
+    #[repr(align(64))]
+    #[derive(Clone, Copy)]
+    pub(crate) struct CountingAllocator<'a>(pub(crate) &'a Counts);
+
+    unsafe impl Allocator for CountingAllocator<'_> {
+        fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
+            self.0.allocs.fetch_add(1, Relaxed);
+            Global.allocate(layout)
+        }
+
+        unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
+            self.0.frees.fetch_add(1, Relaxed);
+            unsafe { Global.deallocate(ptr, layout) }
+        }
+    }
+}

@@ -470,4 +470,35 @@ mod tests {
         assert_eq!(arc.header.header, 1);
         assert_eq!(&arc.slice, [2, 2, 2]);
     }
+
+    #[test]
+    fn custom_allocator() {
+        use crate::test_alloc::{CountingAllocator, Counts};
+
+        let counts = Counts::default();
+        let alloc = CountingAllocator(&counts);
+
+        let mut unique = Arc::try_unique(Arc::new_in(1, alloc)).unwrap();
+        *unique += 1;
+        let shared = unique.shareable();
+        let unique = UniqueArc::try_from(shared).unwrap();
+        assert_eq!(*unique, 2);
+        drop(unique);
+
+        let unique = Arc::into_unique(Arc::new_in(3, alloc)).unwrap();
+        drop(unique);
+
+        let mut shared = Arc::new_in(4, alloc);
+        let other = shared.clone();
+        **Arc::make_unique(&mut shared) += 1;
+        assert_eq!((*shared, *other), (5, 4));
+        drop(other);
+        assert!(Arc::get_unique(&mut shared).is_some());
+        drop(shared);
+
+        let uninit = Arc::try_unique(Arc::new_in(MaybeUninit::new(6), alloc)).unwrap();
+        assert_eq!(*unsafe { UniqueArc::assume_init(uninit) }, 6);
+
+        assert_eq!(counts.get(), (5, 5));
+    }
 }

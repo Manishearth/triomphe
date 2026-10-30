@@ -235,3 +235,17 @@ fn clone_arc_borrow_str() {
     assert_eq!(&*b, "hello");
     assert!(ArcBorrow::ptr_eq(&b, &b));
 }
+
+#[test]
+fn custom_allocator_borrow() {
+    use crate::test_alloc::{CountingAllocator, Counts};
+
+    let counts = Counts::default();
+    let x = Arc::new_in(42, CountingAllocator(&counts));
+    let b = x.borrow_arc();
+    assert_eq!(ArcBorrow::strong_count(&b), 1);
+    let y = b.clone_arc();
+    assert_eq!((*y, Arc::count(&x)), (42, 2));
+    drop((x, y));
+    assert_eq!(counts.get(), (1, 1));
+}

@@ -685,4 +685,31 @@ mod tests {
     const _: () = is_partial_ord::<ThinArc<f64, u64>>();
     const _: () = is_partial_ord::<ThinArc<u64, f64>>();
     const _: () = is_ord::<ThinArc<u64, u64>>();
+
+    #[test]
+    fn custom_allocator() {
+        use crate::test_alloc::{CountingAllocator, Counts};
+
+        let counts = Counts::default();
+        let alloc = CountingAllocator(&counts);
+
+        let mut thin = ThinArc::from_header_and_iter_in(1u8, [1u16, 2, 3].into_iter(), alloc);
+        let clone = thin.clone();
+        assert_eq!(ThinArc::strong_count(&thin), 2);
+        assert_eq!(thin, clone);
+        drop(clone);
+
+        thin.with_arc_mut(|arc| Arc::get_mut(arc).unwrap().slice_mut().fill(2));
+        let arc = Arc::from_thin(thin);
+        assert_eq!((arc.header.header, &arc.slice), (1, &[2, 2, 2][..]));
+        let thin = Arc::into_thin(arc);
+        assert_eq!(&thin.slice, [2, 2, 2]);
+        drop(thin);
+
+        let thin = ThinArc::try_from_header_and_iter_in((), [4u64].into_iter(), alloc).unwrap();
+        assert_eq!(&thin.slice, [4]);
+        drop(thin);
+
+        assert_eq!(counts.get(), (2, 2));
+    }
 }

@@ -303,7 +303,7 @@ mod tests {
     #[cfg(feature = "std")]
     fn safe_offset_arc_make_mut_reentrant_drop_panic_uaf() {
         use core::sync::atomic::{AtomicBool, Ordering};
-        use std::panic::{catch_unwind, AssertUnwindSafe};
+        use std::panic::{AssertUnwindSafe, catch_unwind};
         use std::sync::{Arc as StdArc, Mutex};
 
         struct ReentrantClone {
@@ -349,5 +349,25 @@ mod tests {
         assert!(result.is_err());
 
         assert_eq!(offset.value, 37);
+    }
+
+    #[test]
+    fn custom_allocator() {
+        use crate::test_alloc::{CountingAllocator, Counts};
+
+        let counts = Counts::default();
+        let alloc = CountingAllocator(&counts);
+
+        let mut offset = Arc::into_raw_offset(Arc::new_in(1, alloc));
+        let other = offset.clone();
+        assert_eq!(OffsetArc::strong_count(&offset), 2);
+        // Shared, so `make_mut` clones into a new allocation from the same allocator.
+        *offset.make_mut() += 1;
+        assert_eq!((*offset, *other), (2, 1));
+        assert_eq!(*offset.borrow_arc().clone_arc(), 2);
+        drop(other);
+        assert_eq!(*Arc::from_raw_offset(offset), 2);
+
+        assert_eq!(counts.get(), (2, 2));
     }
 }
