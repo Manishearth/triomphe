@@ -1103,7 +1103,7 @@ mod tests {
         uninit.write(String::from("nonononono"));
 
         // Read invalidated reference to trigger UB
-        let _read = &*x;
+        let _read = x;
     }
 
     #[test]
@@ -1119,7 +1119,7 @@ mod tests {
         uninit.as_mut_slice()[0].write(String::from("nonononono"));
 
         // Read invalidated reference to trigger UB
-        let _read = &*x;
+        let _read = x;
     }
 
     #[test]
@@ -1369,7 +1369,7 @@ mod tests {
         // and uniqueness before mutating through the pointer.
         let mut arc1: Arc<MaybeUninit<u64>> = Arc::new_uninit();
         let arc2 = arc1.clone();
-        let shared: &MaybeUninit<u64> = &*arc2;
+        let shared: &MaybeUninit<u64> = &arc2;
 
         let _ptr: *mut MaybeUninit<u64> = arc1.as_mut_ptr();
 
