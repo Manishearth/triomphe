@@ -50,19 +50,17 @@ impl<T: ?Sized, A: Allocator> ArcInner<T, A> {
     ///   This is **not** the case, for example, when `Arc` was uninitialized `MaybeUninit<T>`
     ///   and the pointer was cast to `*const T`.
     const unsafe fn offset_of_data(value: *const T) -> usize {
-        unsafe {
-            // We can use `Layout::for_value_raw` when it is stable.
-            let value = &*value;
+        // We can use `Layout::for_value_raw` when it is stable.
+        let value = &*value;
 
-            let Ok((layout, _)) = Layout::new::<atomic::AtomicUsize>().extend(Layout::new::<A>())
-            else {
-                panic!("failed to extend allocator layout")
-            };
-            let Ok((_, offset)) = layout.extend(Layout::for_value(value)) else {
-                panic!("failed to extend")
-            };
-            offset
-        }
+        let Ok((layout, _)) = Layout::new::<atomic::AtomicUsize>().extend(Layout::new::<A>())
+        else {
+            panic!("failed to extend allocator layout")
+        };
+        let Ok((_, offset)) = layout.extend(Layout::for_value(value)) else {
+            panic!("failed to extend")
+        };
+        offset
     }
 }
 
@@ -102,6 +100,9 @@ impl<T, A: Allocator> Arc<T, A> {
         let memory = allocator.allocate(layout).map_err(|_| AllocError)?;
         let inner = memory.cast::<ArcInner<T, A>>().as_ptr();
 
+        // SAFETY: `inner` is a fresh, non-null allocation with the layout of
+        // `ArcInner<T, A>`, so each field is valid for writes and nothing is
+        // read before every field has been initialized.
         unsafe {
             ptr::write(addr_of_mut!((*inner).count), atomic::AtomicUsize::new(1));
             ptr::write(addr_of_mut!((*inner).allocator), allocator);
@@ -272,7 +273,7 @@ impl<T> Arc<[T]> {
     /// - The given pointer must be a valid pointer to `[T]` that came from [`Arc::into_raw`].
     /// - After `from_raw_slice`, the pointer must not be accessed.
     pub const unsafe fn from_raw_slice(ptr: *const [T]) -> Self {
-        unsafe { Arc::from_raw(ptr) }
+        Arc::from_raw(ptr)
     }
 }
 
@@ -304,19 +305,14 @@ impl<T: ?Sized, A: Allocator> Arc<T, A> {
         // to subtract the offset of the `data` field from the pointer.
 
         // SAFETY: `ptr` comes from `ArcInner.data`, so it must be initialized.
-        let offset_of_data = unsafe { ArcInner::<T, A>::offset_of_data(ptr) };
+        let offset_of_data = ArcInner::<T, A>::offset_of_data(ptr);
 
         // SAFETY: `from_raw_inner` expects a pointer to the beginning of the allocation,
         //   not a pointer to data part.
         //  `ptr` points to `ArcInner.data`, so subtraction results
         //   in the beginning of the `ArcInner`, which is the beginning of the allocation.
-        let arc_inner_ptr = unsafe { ptr.byte_sub(offset_of_data) };
-        unsafe {
-            Arc {
-                p: NonNull::new_unchecked(arc_inner_ptr as *mut ArcInner<T, A>),
-                phantom: PhantomData,
-            }
-        }
+        let arc_inner_ptr = ptr.byte_sub(offset_of_data);
+        Arc::from_raw_inner(arc_inner_ptr as *mut ArcInner<T, A>)
     }
 }
 
@@ -345,6 +341,8 @@ impl<T: ?Sized, A: Allocator> Arc<T, A> {
     /// Produce a pointer to the data that can be converted back to an `Arc`.
     #[inline]
     pub const fn borrow_arc(&self) -> ArcBorrow<'_, T, A> {
+        // SAFETY: `as_ptr` is non-null and keeps provenance over the whole `ArcInner`,
+        // and `&self` keeps a strong reference alive for the borrow's lifetime.
         unsafe { ArcBorrow(NonNull::new_unchecked(self.as_ptr() as *mut T), PhantomData) }
     }
 }
@@ -394,11 +392,9 @@ impl<T: ?Sized, A: Allocator> Arc<T, A> {
     /// The `ptr` must point to a valid instance, allocated by an `Arc`. The reference could will
     /// not be modified.
     pub(super) const unsafe fn from_raw_inner(ptr: *mut ArcInner<T, A>) -> Self {
-        unsafe {
-            Arc {
-                p: ptr::NonNull::new_unchecked(ptr),
-                phantom: PhantomData,
-            }
+        Arc {
+            p: ptr::NonNull::new_unchecked(ptr),
+            phantom: PhantomData,
         }
     }
 }
@@ -529,6 +525,7 @@ impl<T: ?Sized, A: Allocator> Arc<T, A> {
                 addr_of_mut!((*inner_ptr).count),
                 atomic::AtomicUsize::new(1),
             );
+            // `full_layout` includes the `allocator` field, so it is in bounds.
             ptr::write(addr_of_mut!((*inner_ptr).allocator), allocator);
             // Pointer stays non-null
             Ok(NonNull::new_unchecked(inner_ptr))
@@ -664,10 +661,8 @@ impl<T, A: Allocator> Arc<MaybeUninit<T>, A> {
     /// Must initialize all fields before calling this function.
     #[inline]
     pub const unsafe fn assume_init(self) -> Arc<T, A> {
-        unsafe {
-            let this = ManuallyDrop::new(self);
-            Arc::from_raw_inner(mdref(&this).ptr().cast())
-        }
+        let this = ManuallyDrop::new(self);
+        Arc::from_raw_inner(mdref(&this).ptr().cast())
     }
 }
 
@@ -701,10 +696,8 @@ impl<T, A: Allocator> Arc<[MaybeUninit<T>], A> {
     /// Must initialize all fields before calling this function.
     #[inline]
     pub const unsafe fn assume_init(self) -> Arc<[T], A> {
-        unsafe {
-            let this = ManuallyDrop::new(self);
-            Arc::from_raw_inner(mdref(&this).ptr() as _)
-        }
+        let this = ManuallyDrop::new(self);
+        Arc::from_raw_inner(mdref(&this).ptr() as _)
     }
 }
 
@@ -722,7 +715,7 @@ impl<T: ?Sized, A: Allocator> Clone for Arc<T, A> {
         // another must already provide any required synchronization.
         //
         // [1]: (www.boost.org/doc/libs/1_55_0/doc/html/atomic/usage_examples.html)
-        let old_size = unsafe { self.p.as_ref() }.count.fetch_add(1, Relaxed);
+        let old_size = self.inner().count.fetch_add(1, Relaxed);
 
         // However we need to guard against massive refcounts in case someone
         // is `mem::forget`ing Arcs. If we don't do this the count can overflow
@@ -739,7 +732,7 @@ impl<T: ?Sized, A: Allocator> Clone for Arc<T, A> {
 
         unsafe {
             Arc {
-                p: ptr::NonNull::new_unchecked(self.p.as_ptr()),
+                p: ptr::NonNull::new_unchecked(self.ptr()),
                 phantom: PhantomData,
             }
         }
@@ -751,7 +744,7 @@ impl<T: ?Sized, A: Allocator> Deref for Arc<T, A> {
 
     #[inline]
     fn deref(&self) -> &T {
-        unsafe { &self.p.as_ref().data }
+        &self.inner().data
     }
 }
 
@@ -772,7 +765,7 @@ impl<T: Clone, A: Allocator + Clone> Arc<T, A> {
     #[inline]
     pub fn make_mut(this: &mut Self) -> &mut T {
         if !this.is_unique() {
-            let allocator = unsafe { this.p.as_ref() }.allocator.clone();
+            let allocator = this.inner().allocator.clone();
             *this = Arc::new_in(T::clone(this), allocator);
         }
 
@@ -894,6 +887,10 @@ impl<T: ?Sized, A: Allocator> Arc<T, A> {
     }
 }
 
+/// Frees an `ArcInner` allocation on drop, so it is released even if dropping `data` panics.
+///
+/// Safety invariant: `ptr` was allocated by `allocator` with `layout` and is not used after
+/// this guard is dropped.
 struct Deallocate<A: Allocator> {
     allocator: A,
     ptr: NonNull<u8>,
@@ -902,37 +899,74 @@ struct Deallocate<A: Allocator> {
 
 impl<A: Allocator> Drop for Deallocate<A> {
     fn drop(&mut self) {
+        // SAFETY: guaranteed by the type's safety invariant.
         unsafe { self.allocator.deallocate(self.ptr, self.layout) };
     }
 }
 
+/// Drops `data` and frees the allocation with its stored allocator.
+///
+/// # Safety
+///
+/// `inner` must point to a live, fully initialized `ArcInner` whose reference count has
+/// reached zero, and must not be used afterwards.
+#[inline(never)]
 unsafe fn drop_arc_inner<T: ?Sized, A: Allocator>(inner: *mut ArcInner<T, A>) {
-    unsafe {
-        let layout = Layout::for_value(&*inner);
-        let allocator = ptr::read(addr_of_mut!((*inner).allocator));
-        let _deallocate = Deallocate {
-            allocator,
-            ptr: NonNull::new_unchecked(inner.cast()),
-            layout,
-        };
-        ptr::drop_in_place(addr_of_mut!((*inner).data));
-    }
+    // SAFETY: the caller guarantees `inner` is live, initialized, and uniquely owned, so we
+    // can read its layout, move the allocator out (it is never read again), and drop `data`.
+    // `inner` came from `allocator` with this layout, which upholds `Deallocate`'s invariant.
+    let layout = Layout::for_value(&*inner);
+    let allocator = ptr::read(addr_of_mut!((*inner).allocator));
+    let _deallocate = Deallocate {
+        allocator,
+        ptr: NonNull::new_unchecked(inner.cast()),
+        layout,
+    };
+    ptr::drop_in_place(addr_of_mut!((*inner).data));
 }
 
 fn drop_arc<T: ?Sized, A: Allocator>(arc: &mut Arc<T, A>) {
-    let inner = unsafe { &*arc.p.as_ptr() };
-    if inner.count.fetch_sub(1, Release) != 1 {
+    // Because `fetch_sub` is already atomic, we do not need to synchronize
+    // with other threads unless we are going to delete the object.
+    if arc.inner().count.fetch_sub(1, Release) != 1 {
         return;
     }
 
+    // This fence is needed to prevent reordering of use of the data and
+    // deletion of the data. Because it is marked `Release`, the decreasing
+    // of the reference count synchronizes with this `Acquire` fence. This
+    // means that use of the data happens before decreasing the reference
+    // count, which happens before this fence, which happens before the
+    // deletion of the data.
+    //
+    // As explained in the [Boost documentation][1],
+    //
+    // > It is important to enforce any possible access to the object in one
+    // > thread (through an existing reference) to *happen before* deleting
+    // > the object in a different thread. This is achieved by a "release"
+    // > operation after dropping a reference (any access to the object
+    // > through this reference must obviously happened before), and an
+    // > "acquire" operation before deleting the object.
+    //
+    // In particular, while the contents of an Arc are usually immutable, it's
+    // possible to have interior writes to something like a Mutex<T>. Since a
+    // Mutex is not acquired when it is deleted, we can't rely on its
+    // synchronization logic to make writes in thread A visible to a destructor
+    // running in thread B.
+    //
+    // [1]: (www.boost.org/doc/libs/1_55_0/doc/html/atomic/usage_examples.html)
+    //
     // ThreadSanitizer does not model fences, so use an equivalent `Acquire` load
     // under TSan, as `std::sync::Arc` does.
     if cfg!(triomphe_tsan) {
-        inner.count.load(Acquire);
+        arc.inner().count.load(Acquire);
     } else {
         atomic::fence(Acquire);
     }
-    unsafe { drop_arc_inner(arc.p.as_ptr()) };
+
+    // SAFETY: we just released the last strong reference, and the fence above orders
+    // all prior uses of the data before this deallocation.
+    unsafe { drop_arc_inner(arc.ptr()) };
 }
 
 #[cfg(not(feature = "unstable_dropck_eyepatch"))]
@@ -1096,19 +1130,17 @@ unsafe impl<T, U: ?Sized, A: Allocator> unsize::CoerciblePtr<U> for Arc<T, A> {
     }
 
     unsafe fn replace_ptr(self, new: *mut U) -> Arc<U, A> {
-        unsafe {
-            // Fix the provenance by ensuring that of `self` is used.
-            let inner = ManuallyDrop::new(self);
-            let p = inner.p.as_ptr() as *mut T;
-            // Safety: This points to an ArcInner of the previous self and holds shared ownership since
-            // the old pointer never decremented the reference count. The caller upholds that `new` is
-            // an unsized version of the previous ArcInner. This assumes that unsizing to the fat
-            // pointer tag of an `ArcInner<U>` and `U` is isomorphic under a direct pointer cast since
-            // in reality we unsized *mut T to *mut U at the address of the ArcInner. This is the case
-            // for all currently envisioned unsized types where the tag of T and ArcInner<T> are simply
-            // the same.
-            Arc::from_raw_inner(p.replace_ptr(new) as *mut ArcInner<U, A>)
-        }
+        // Fix the provenance by ensuring that of `self` is used.
+        let inner = ManuallyDrop::new(self);
+        let p = inner.p.as_ptr() as *mut T;
+        // Safety: This points to an ArcInner of the previous self and holds shared ownership since
+        // the old pointer never decremented the reference count. The caller upholds that `new` is
+        // an unsized version of the previous ArcInner. This assumes that unsizing to the fat
+        // pointer tag of an `ArcInner<U>` and `U` is isomorphic under a direct pointer cast since
+        // in reality we unsized *mut T to *mut U at the address of the ArcInner. This is the case
+        // for all currently envisioned unsized types where the tag of T and ArcInner<T> are simply
+        // the same.
+        Arc::from_raw_inner(p.replace_ptr(new) as *mut ArcInner<U, A>)
     }
 }
 

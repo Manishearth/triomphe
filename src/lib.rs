@@ -108,6 +108,7 @@ pub(crate) mod test_alloc {
     #[derive(Clone, Copy)]
     pub(crate) struct CountingAllocator<'a>(pub(crate) &'a Counts);
 
+    // SAFETY: every call forwards to `Global`, which upholds the `Allocator` contract.
     unsafe impl Allocator for CountingAllocator<'_> {
         fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
             self.0.allocs.fetch_add(1, Relaxed);
