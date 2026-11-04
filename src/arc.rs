@@ -1091,7 +1091,7 @@ mod tests {
     }
 
     #[test]
-    #[allow(deprecated)]
+    #[allow(deprecated, clippy::borrow_deref_ref)]
     #[should_panic = "`Arc` must be unique in order for this operation to be safe"]
     fn maybeuninit_ub_to_proceed() {
         let mut uninit = Arc::new_uninit();
@@ -1107,7 +1107,7 @@ mod tests {
     }
 
     #[test]
-    #[allow(deprecated)]
+    #[allow(deprecated, clippy::borrow_deref_ref)]
     #[should_panic = "`Arc` must be unique in order for this operation to be safe"]
     fn maybeuninit_slice_ub_to_proceed() {
         let mut uninit = Arc::new_uninit_slice(13);
@@ -1357,6 +1357,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::explicit_auto_deref)]
     fn test_as_mut_ptr_sound() {
         // See https://github.com/Manishearth/triomphe/issues/134
         //
