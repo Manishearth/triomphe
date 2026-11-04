@@ -1,5 +1,7 @@
+use alloc::alloc::{Global, Layout};
+use alloc::boxed::Box;
 use alloc::vec::Vec;
-use alloc::{alloc::Layout, boxed::Box};
+use core::alloc::Allocator;
 use core::convert::TryFrom;
 use core::iter::FromIterator;
 use core::marker::PhantomData;
@@ -39,12 +41,12 @@ use super::{Arc, ArcInner};
 /// let y = x.shareable(); // y is an Arc<T>
 /// ```
 #[repr(transparent)]
-pub struct UniqueArc<T: ?Sized>(Arc<T>);
+pub struct UniqueArc<T: ?Sized, A: Allocator = Global>(Arc<T, A>);
 
 // Uniquene ownership means that we can support weaker bounds than `T: Send + Sync`.
 // Thus, these impls can follow the precedent of std's `Box`, not `Arc`.
-unsafe impl<T: ?Sized + Send> Send for UniqueArc<T> {}
-unsafe impl<T: ?Sized + Sync> Sync for UniqueArc<T> {}
+unsafe impl<T: ?Sized + Send, A: Allocator + Send> Send for UniqueArc<T, A> {}
+unsafe impl<T: ?Sized + Sync, A: Allocator + Sync> Sync for UniqueArc<T, A> {}
 
 impl<T> UniqueArc<T> {
     #[inline]
@@ -115,10 +117,10 @@ impl<T> UniqueArc<T> {
     }
 }
 
-impl<T: ?Sized> UniqueArc<T> {
+impl<T: ?Sized, A: Allocator> UniqueArc<T, A> {
     /// Convert to a shareable `Arc<T>` once we're done mutating it
     #[inline]
-    pub const fn shareable(self) -> Arc<T> {
+    pub const fn shareable(self) -> Arc<T, A> {
         let this = ManuallyDrop::new(self);
         // Safety: UniqueArc isn't drop, just the inner Arc is
         unsafe { mem::transmute_copy(&mdref(&this).0) }
@@ -132,7 +134,7 @@ impl<T: ?Sized> UniqueArc<T> {
     ///
     /// The given `Arc` must have a reference count of exactly one
     ///
-    pub(crate) unsafe fn from_arc(arc: Arc<T>) -> Self {
+    pub(crate) unsafe fn from_arc(arc: Arc<T, A>) -> Self {
         debug_assert_eq!(Arc::count(&arc), 1);
         Self(arc)
     }
@@ -144,18 +146,18 @@ impl<T: ?Sized> UniqueArc<T> {
     /// # Safety
     ///
     /// The given `Arc` must have a reference count of exactly one
-    pub(crate) unsafe fn from_arc_ref(arc: &mut Arc<T>) -> &mut Self {
+    pub(crate) unsafe fn from_arc_ref(arc: &mut Arc<T, A>) -> &mut Self {
         unsafe {
             debug_assert_eq!(Arc::count(arc), 1);
 
             // Safety: caller guarantees that `arc` is unique,
             //         `UniqueArc` is `repr(transparent)`
-            &mut *(arc as *mut Arc<T> as *mut UniqueArc<T>)
+            &mut *(arc as *mut Arc<T, A> as *mut UniqueArc<T, A>)
         }
     }
 }
 
-impl<T> UniqueArc<MaybeUninit<T>> {
+impl<T, A: Allocator> UniqueArc<MaybeUninit<T>, A> {
     /// Calls `MaybeUninit::write` on the contained value.
     pub fn write(&mut self, val: T) -> &mut T {
         unsafe {
@@ -183,7 +185,7 @@ impl<T> UniqueArc<MaybeUninit<T>> {
     /// same safety requirements. You are responsible for ensuring that the `T`
     /// has actually been initialized before calling this method.
     #[inline]
-    pub const unsafe fn assume_init(this: Self) -> UniqueArc<T> {
+    pub const unsafe fn assume_init(this: Self) -> UniqueArc<T, A> {
         let this = ManuallyDrop::new(this);
         UniqueArc(Arc {
             p: mdref(&this).0.p.cast(),
@@ -214,12 +216,14 @@ impl<T> UniqueArc<[MaybeUninit<T>]> {
         let arc: Arc<[MaybeUninit<T>]> = arc.into();
         Ok(UniqueArc(arc))
     }
+}
 
+impl<T, A: Allocator> UniqueArc<[MaybeUninit<T>], A> {
     /// # Safety
     ///
     /// Must initialize all fields before calling this function.
     #[inline]
-    pub const unsafe fn assume_init_slice(this: Self) -> UniqueArc<[T]> {
+    pub const unsafe fn assume_init_slice(this: Self) -> UniqueArc<[T], A> {
         unsafe { UniqueArc(this.shareable().assume_init()) }
     }
 }
@@ -270,25 +274,27 @@ impl<H, T> UniqueArc<HeaderSlice<H, [MaybeUninit<T>]>> {
             phantom: PhantomData,
         }))
     }
+}
 
+impl<H, T, A: Allocator> UniqueArc<HeaderSlice<H, [MaybeUninit<T>]>, A> {
     /// # Safety
     ///
     /// Must initialize all fields before calling this function.
     #[inline]
-    pub const unsafe fn assume_init_slice_with_header(self) -> UniqueArc<HeaderSlice<H, [T]>> {
+    pub const unsafe fn assume_init_slice_with_header(self) -> UniqueArc<HeaderSlice<H, [T]>, A> {
         unsafe { core::mem::transmute(self) }
     }
 }
 
-impl<T: ?Sized> TryFrom<Arc<T>> for UniqueArc<T> {
-    type Error = Arc<T>;
+impl<T: ?Sized, A: Allocator> TryFrom<Arc<T, A>> for UniqueArc<T, A> {
+    type Error = Arc<T, A>;
 
-    fn try_from(arc: Arc<T>) -> Result<Self, Self::Error> {
+    fn try_from(arc: Arc<T, A>) -> Result<Self, Self::Error> {
         Arc::try_unique(arc)
     }
 }
 
-impl<T: ?Sized> Deref for UniqueArc<T> {
+impl<T: ?Sized, A: Allocator> Deref for UniqueArc<T, A> {
     type Target = T;
 
     #[inline]
@@ -297,7 +303,7 @@ impl<T: ?Sized> Deref for UniqueArc<T> {
     }
 }
 
-impl<T: ?Sized> DerefMut for UniqueArc<T> {
+impl<T: ?Sized, A: Allocator> DerefMut for UniqueArc<T, A> {
     #[inline]
     fn deref_mut(&mut self) -> &mut T {
         // We know this to be uniquely owned
@@ -327,16 +333,16 @@ impl<A> FromIterator<A> for UniqueArc<[A]> {
 // duplicate the Arc, such that replace_ptr returns a valid instance. This holds since it consumes
 // a unique owner of the contained ArcInner.
 #[cfg(feature = "unsize")]
-unsafe impl<T, U: ?Sized> unsize::CoerciblePtr<U> for UniqueArc<T> {
+unsafe impl<T, U: ?Sized, A: Allocator> unsize::CoerciblePtr<U> for UniqueArc<T, A> {
     type Pointee = T;
-    type Output = UniqueArc<U>;
+    type Output = UniqueArc<U, A>;
 
     fn as_sized_ptr(&mut self) -> *mut T {
         // Dispatch to the contained field.
         unsize::CoerciblePtr::<U>::as_sized_ptr(&mut self.0)
     }
 
-    unsafe fn replace_ptr(self, new: *mut U) -> UniqueArc<U> {
+    unsafe fn replace_ptr(self, new: *mut U) -> UniqueArc<U, A> {
         unsafe {
             // Dispatch to the contained field, work around conflict of destructuring and Drop.
             let inner = ManuallyDrop::new(self);
@@ -463,5 +469,36 @@ mod tests {
         assert!(arc.is_unique());
         assert_eq!(arc.header.header, 1);
         assert_eq!(&arc.slice, [2, 2, 2]);
+    }
+
+    #[test]
+    fn custom_allocator() {
+        use crate::test_alloc::{CountingAllocator, Counts};
+
+        let counts = Counts::default();
+        let alloc = CountingAllocator(&counts);
+
+        let mut unique = Arc::try_unique(Arc::new_in(1, alloc)).unwrap();
+        *unique += 1;
+        let shared = unique.shareable();
+        let unique = UniqueArc::try_from(shared).unwrap();
+        assert_eq!(*unique, 2);
+        drop(unique);
+
+        let unique = Arc::into_unique(Arc::new_in(3, alloc)).unwrap();
+        drop(unique);
+
+        let mut shared = Arc::new_in(4, alloc);
+        let other = shared.clone();
+        **Arc::make_unique(&mut shared) += 1;
+        assert_eq!((*shared, *other), (5, 4));
+        drop(other);
+        assert!(Arc::get_unique(&mut shared).is_some());
+        drop(shared);
+
+        let uninit = Arc::try_unique(Arc::new_in(MaybeUninit::new(6), alloc)).unwrap();
+        assert_eq!(*unsafe { UniqueArc::assume_init(uninit) }, 6);
+
+        assert_eq!(counts.get(), (5, 5));
     }
 }

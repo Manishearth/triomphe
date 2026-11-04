@@ -1,7 +1,8 @@
-use alloc::alloc::Layout;
+use alloc::alloc::{Global, Layout};
 use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
+use core::alloc::Allocator;
 use core::cmp::Ordering;
 use core::iter::{ExactSizeIterator, Iterator};
 use core::marker::PhantomData;
@@ -24,20 +25,15 @@ pub struct HeaderSlice<H, T: ?Sized> {
     pub slice: T,
 }
 
-impl<H, T> Arc<HeaderSlice<H, [T]>> {
-    /// Creates an Arc for a HeaderSlice using the given header struct and
-    /// iterator to generate the slice. The resulting Arc will be fat.
-    ///
-    /// **Panics** if the iterator yields a different number of elements than
-    /// reported, or if the iterator itself panicked. In either case, the
-    /// memory is leaked.
-    pub fn from_header_and_iter<I>(header: H, mut items: I) -> Self
+impl<H, T, A: Allocator> Arc<HeaderSlice<H, [T]>, A> {
+    /// Version of [`Arc::from_header_and_iter`] that allocates with `allocator`.
+    pub fn from_header_and_iter_in<I>(header: H, mut items: I, allocator: A) -> Self
     where
         I: Iterator<Item = T> + ExactSizeIterator,
     {
         let num_items = items.len();
 
-        let inner = Arc::allocate_for_header_and_slice(num_items);
+        let inner = Arc::allocate_for_header_and_slice_in(num_items, allocator);
 
         unsafe {
             // Write the data.
@@ -69,19 +65,18 @@ impl<H, T> Arc<HeaderSlice<H, [T]>> {
         }
     }
 
-    /// Fallible version of [`Arc::from_header_and_iter`].
-    ///
-    /// Returns `Err(AllocError)` if allocation fails. As with
-    /// [`Arc::from_header_and_iter`], this **panics** (and leaks the
-    /// uninitialized memory) if the iterator yields a different number of
-    /// elements than it reported, or if the iterator itself panics.
-    pub fn try_from_header_and_iter<I>(header: H, mut items: I) -> Result<Self, AllocError>
+    /// Version of [`Arc::try_from_header_and_iter`] that allocates with `allocator`.
+    pub fn try_from_header_and_iter_in<I>(
+        header: H,
+        mut items: I,
+        allocator: A,
+    ) -> Result<Self, AllocError>
     where
         I: Iterator<Item = T> + ExactSizeIterator,
     {
         let num_items = items.len();
 
-        let inner = Arc::try_allocate_for_header_and_slice(num_items)?;
+        let inner = Arc::try_allocate_for_header_and_slice_in(num_items, allocator)?;
 
         unsafe {
             // Write the data.
@@ -111,6 +106,34 @@ impl<H, T> Arc<HeaderSlice<H, [T]>> {
             p: inner,
             phantom: PhantomData,
         })
+    }
+}
+
+impl<H, T> Arc<HeaderSlice<H, [T]>> {
+    /// Creates an Arc for a HeaderSlice using the given header struct and
+    /// iterator to generate the slice. The resulting Arc will be fat.
+    ///
+    /// **Panics** if the iterator yields a different number of elements than
+    /// reported, or if the iterator itself panicked. In either case, the
+    /// memory is leaked.
+    pub fn from_header_and_iter<I>(header: H, items: I) -> Self
+    where
+        I: Iterator<Item = T> + ExactSizeIterator,
+    {
+        Arc::from_header_and_iter_in(header, items, Global)
+    }
+
+    /// Fallible version of [`Arc::from_header_and_iter`].
+    ///
+    /// Returns `Err(AllocError)` if allocation fails. As with
+    /// [`Arc::from_header_and_iter`], this **panics** (and leaks the
+    /// uninitialized memory) if the iterator yields a different number of
+    /// elements than it reported, or if the iterator itself panics.
+    pub fn try_from_header_and_iter<I>(header: H, items: I) -> Result<Self, AllocError>
+    where
+        I: Iterator<Item = T> + ExactSizeIterator,
+    {
+        Arc::try_from_header_and_iter_in(header, items, Global)
     }
 
     /// Creates an Arc for a HeaderSlice using the given header struct and
