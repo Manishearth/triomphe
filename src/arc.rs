@@ -821,7 +821,14 @@ impl<T: ?Sized> Arc<T> {
         // running in thread B.
         //
         // [1]: (www.boost.org/doc/libs/1_55_0/doc/html/atomic/usage_examples.html)
-        atomic::fence(Acquire);
+        //
+        // ThreadSanitizer does not model fences, so use an equivalent `Acquire` load
+        // under TSan, as `std::sync::Arc` does.
+        if cfg!(triomphe_tsan) {
+            self.inner().count.load(Acquire);
+        } else {
+            atomic::fence(Acquire);
+        }
 
         unsafe {
             self.drop_slow();
