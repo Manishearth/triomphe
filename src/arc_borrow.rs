@@ -166,6 +166,11 @@ impl<'a, T: ?Sized> Deref for ArcBorrow<'a, T> {
     }
 }
 
+#[cfg(feature = "stable_deref_trait")]
+unsafe impl<'a, T: ?Sized> stable_deref_trait::StableDeref for ArcBorrow<'a, T> {}
+#[cfg(feature = "stable_deref_trait")]
+unsafe impl<'a, T: ?Sized> stable_deref_trait::CloneStableDeref for ArcBorrow<'a, T> {}
+
 // SAFETY:
 // This implementation must guarantee that it is sound to call `replace_ptr` with an unsized variant
 // of the pointer returned in `as_sized_ptr`. By `CoerciblePtr::replace_ptr`'s contract, `new` has
