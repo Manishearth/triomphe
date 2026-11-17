@@ -17,6 +17,8 @@
 //! * `triomphe::Arc` has can be constructed for dynamically-sized types via `from_header_and_iter`
 //! * `triomphe::ThinArc` provides thin-pointer `Arc`s to dynamically sized types
 //! * `triomphe::ArcUnion` is union of two `triomphe::Arc`s which fits inside one word of memory
+//!
+//! With the optional `yoke` feature, `Arc`, `ThinArc`, `OffsetArc` and `ArcBorrow` implement [`yoke::CloneableCart`](https://docs.rs/yoke/latest/yoke/trait.CloneableCart.html) and can be used as cloneable [`Yoke`](https://docs.rs/yoke/latest/yoke/struct.Yoke.html) carts.
 
 #![allow(missing_docs)]
 #![cfg_attr(not(feature = "std"), no_std)]
@@ -34,6 +36,8 @@ extern crate serde;
 extern crate stable_deref_trait;
 #[cfg(feature = "unsize")]
 extern crate unsize;
+#[cfg(feature = "yoke")]
+extern crate yoke;
 
 mod alloc_error;
 mod arc;
@@ -71,6 +75,29 @@ fn abort() -> ! {
     }
     let _double_panicer = PanicOnDrop;
     panic!();
+}
+
+/// Asserts that yokes cloned from (or projected off) one attached to `cart` keep borrowing
+/// the cart's original `b"hello"` bytes, even after the original yoke is dropped.
+#[cfg(all(test, feature = "yoke"))]
+fn assert_yoke_clones_share_cart<C>(cart: C, project: fn(&C::Target) -> &[u8])
+where
+    C: yoke::CloneableCart + stable_deref_trait::StableDeref,
+    C::Target: 'static,
+{
+    use yoke::Yoke;
+
+    let yoke = Yoke::<&'static [u8], C>::attach_to_cart(cart, project);
+    let data = yoke.get().as_ptr();
+    let clone = yoke.clone();
+    let tail: Yoke<&'static [u8], C> = yoke.map_project_cloned(|&bytes, _| &bytes[1..]);
+    drop(yoke);
+
+    assert_eq!(*clone.get(), b"hello");
+    assert_eq!(clone.get().as_ptr(), data);
+    assert_eq!(project(clone.backing_cart()).as_ptr(), data);
+    assert_eq!(*tail.get(), b"ello");
+    assert_eq!(tail.get().as_ptr(), data.wrapping_add(1));
 }
 
 // `ManuallyDrop::deref` is a `Deref` trait method, so it isn't callable in a

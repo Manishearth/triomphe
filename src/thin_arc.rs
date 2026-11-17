@@ -275,6 +275,10 @@ unsafe impl<H, T> stable_deref_trait::StableDeref for ThinArc<H, T> {}
 #[cfg(feature = "stable_deref_trait")]
 unsafe impl<H, T> stable_deref_trait::CloneStableDeref for ThinArc<H, T> {}
 
+// Safety: `ThinArc` is `StableDeref`, and a clone owns a strong reference to the same allocation.
+#[cfg(feature = "yoke")]
+unsafe impl<H, T> yoke::CloneableCart for ThinArc<H, T> {}
+
 impl<H, T> Clone for ThinArc<H, T> {
     #[inline]
     fn clone(&self) -> Self {
@@ -648,6 +652,15 @@ mod tests {
 
     #[allow(dead_code)]
     const fn is_ord<T: ?Sized + Ord>() {}
+
+    #[test]
+    #[cfg(feature = "yoke")]
+    fn thin_arc_is_cloneable_cart() {
+        crate::assert_yoke_clones_share_cart(
+            ThinArc::from_header_and_slice((), b"hello"),
+            |header_slice| &header_slice.slice,
+        );
+    }
 
     // compile-time check that PartialOrd/Ord is correctly derived
     const _: () = is_partial_ord::<ThinArc<f64, f64>>();

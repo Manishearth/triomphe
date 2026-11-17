@@ -10,4 +10,6 @@ Fork of Arc. This has the following advantages over std::sync::Arc:
 * `triomphe::ThinArc` provides thin-pointer `Arc`s to dynamically sized types
 * `triomphe::ArcUnion` is union of two `triomphe:Arc`s which fits inside one word of memory
 
+With the optional `yoke` feature, `Arc`, `ThinArc`, `OffsetArc` and `ArcBorrow` implement [`yoke::CloneableCart`](https://docs.rs/yoke/latest/yoke/trait.CloneableCart.html) and can be used as cloneable [`Yoke`](https://docs.rs/yoke/latest/yoke/struct.Yoke.html) carts.
+
 This crate is a version of `servo_arc` meant for general community use.
