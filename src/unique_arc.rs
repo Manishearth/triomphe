@@ -11,7 +11,7 @@ use core::ptr::{self, addr_of_mut};
 use serde::{Deserialize, Serialize};
 
 use crate::iterator_as_exact_size_iterator::IteratorAsExactSizeIterator;
-use crate::{AllocError, HeaderSlice, mdref};
+use crate::{mdref, AllocError, HeaderSlice};
 
 use super::{Arc, ArcInner};
 
@@ -296,6 +296,9 @@ impl<T: ?Sized> Deref for UniqueArc<T> {
         &self.0
     }
 }
+
+#[cfg(feature = "stable_deref_trait")]
+unsafe impl<T: ?Sized> stable_deref_trait::StableDeref for UniqueArc<T> {}
 
 impl<T: ?Sized> DerefMut for UniqueArc<T> {
     #[inline]

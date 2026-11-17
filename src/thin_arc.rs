@@ -11,7 +11,7 @@ use core::ptr;
 
 use super::{Arc, ArcInner, HeaderSlice, HeaderSliceWithLengthProtected, HeaderWithLength};
 use crate::header::HeaderSliceWithLengthUnchecked;
-use crate::{AllocError, mdref};
+use crate::{mdref, AllocError};
 
 /// A "thin" `Arc` containing dynamically sized data
 ///
@@ -269,6 +269,11 @@ impl<H, T> Deref for ThinArc<H, T> {
         unsafe { (*thin_to_thick(self)).data.inner() }
     }
 }
+
+#[cfg(feature = "stable_deref_trait")]
+unsafe impl<H, T> stable_deref_trait::StableDeref for ThinArc<H, T> {}
+#[cfg(feature = "stable_deref_trait")]
+unsafe impl<H, T> stable_deref_trait::CloneStableDeref for ThinArc<H, T> {}
 
 impl<H, T> Clone for ThinArc<H, T> {
     #[inline]
