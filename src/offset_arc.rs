@@ -75,6 +75,10 @@ unsafe impl<T: ?Sized> stable_deref_trait::StableDeref for OffsetArc<T> {}
 #[cfg(feature = "stable_deref_trait")]
 unsafe impl<T: ?Sized> stable_deref_trait::CloneStableDeref for OffsetArc<T> {}
 
+// Safety: `OffsetArc` is `StableDeref`, and a clone owns a strong reference to the same allocation.
+#[cfg(feature = "yoke")]
+unsafe impl<T: ?Sized> yoke::CloneableCart for OffsetArc<T> {}
+
 impl<T: ?Sized> Clone for OffsetArc<T> {
     #[inline]
     fn clone(&self) -> Self {
@@ -351,5 +355,12 @@ mod tests {
         assert!(result.is_err());
 
         assert_eq!(offset.value, 37);
+    }
+
+    #[test]
+    #[cfg(feature = "yoke")]
+    fn offset_arc_is_cloneable_cart() {
+        let cart: OffsetArc<[u8]> = Arc::into_raw_offset(Arc::from(&b"hello"[..]));
+        crate::assert_yoke_clones_share_cart(cart, |bytes| bytes);
     }
 }

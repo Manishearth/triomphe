@@ -951,6 +951,10 @@ unsafe impl<T: ?Sized> StableDeref for Arc<T> {}
 #[cfg(feature = "stable_deref_trait")]
 unsafe impl<T: ?Sized> CloneStableDeref for Arc<T> {}
 
+// Safety: `Arc` is `StableDeref`, and a clone owns a strong reference to the same allocation.
+#[cfg(feature = "yoke")]
+unsafe impl<T: ?Sized> yoke::CloneableCart for Arc<T> {}
+
 #[cfg(feature = "serde")]
 impl<'de, T: Deserialize<'de>> Deserialize<'de> for Arc<T> {
     fn deserialize<D>(deserializer: D) -> Result<Arc<T>, D::Error>
@@ -1382,6 +1386,26 @@ mod tests {
 
     #[allow(dead_code)]
     const fn is_ord<T: ?Sized + Ord>() {}
+
+    #[test]
+    #[cfg(feature = "yoke")]
+    fn arc_is_cloneable_cart() {
+        crate::assert_yoke_clones_share_cart(Arc::<[u8]>::from(&b"hello"[..]), |bytes| bytes);
+    }
+
+    #[test]
+    #[cfg(feature = "yoke")]
+    fn cloned_arc_carts_keep_data_alive() {
+        use yoke::Yoke;
+
+        let arc = Arc::<[u8]>::from(&b"hello"[..]);
+        let yoke = Yoke::<&'static [u8], Arc<[u8]>>::attach_to_cart(arc.clone(), |bytes| bytes);
+        let clone = yoke.clone();
+        assert_eq!(Arc::strong_count(&arc), 3);
+        drop(yoke);
+        drop(clone);
+        assert_eq!(Arc::strong_count(&arc), 1);
+    }
 
     // compile-time check that PartialOrd/Ord is correctly derived
     const _: () = is_partial_ord::<Arc<f64>>();

@@ -171,6 +171,10 @@ unsafe impl<'a, T: ?Sized> stable_deref_trait::StableDeref for ArcBorrow<'a, T> 
 #[cfg(feature = "stable_deref_trait")]
 unsafe impl<'a, T: ?Sized> stable_deref_trait::CloneStableDeref for ArcBorrow<'a, T> {}
 
+// Safety: like `&'a T`, `ArcBorrow` is `StableDeref`, a copy points to the same data, and it owns nothing.
+#[cfg(feature = "yoke")]
+unsafe impl<'a, T: ?Sized> yoke::CloneableCart for ArcBorrow<'a, T> {}
+
 // SAFETY:
 // This implementation must guarantee that it is sound to call `replace_ptr` with an unsized variant
 // of the pointer returned in `as_sized_ptr`. By `CoerciblePtr::replace_ptr`'s contract, `new` has
@@ -213,4 +217,12 @@ fn clone_arc_borrow_str() {
     assert_eq!(x, y);
     assert_eq!(&*b, "hello");
     assert!(ArcBorrow::ptr_eq(&b, &b));
+}
+
+#[test]
+#[cfg(feature = "yoke")]
+fn arc_borrow_is_cloneable_cart() {
+    let arc = Arc::<[u8]>::from(&b"hello"[..]);
+    let cart: ArcBorrow<'_, [u8]> = arc.borrow_arc();
+    crate::assert_yoke_clones_share_cart(cart, |bytes| bytes);
 }
